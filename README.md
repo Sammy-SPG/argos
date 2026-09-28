@@ -1,11 +1,11 @@
 # Argos
 
-Monorepositorio para el sistema Argos. Por ahora solo contiene documentación inicial: todavía no hay plantillas ni código de aplicación.
+Monorepositorio para el sistema Argos. El backend ya tiene una plantilla NestJS y una configuración inicial de Prisma ORM 7 para MySQL/MariaDB. Las aplicaciones cliente y el receptor DC-09 siguen en fase de diseño.
 
 | Directorio | Responsabilidad |
 | --- | --- |
 | [`frontend/`](frontend/) | Clientes Android y Windows, con Flutter como base de código compartida propuesta. |
-| [`backend/`](backend/) | API y lógica de negocio con NestJS. |
+| [`backend/`](backend/) | API NestJS; esquema y primera migración de Prisma ORM 7 para MySQL/MariaDB. |
 | [`dc09-receiver/`](dc09-receiver/) | Posible receptor de eventos DC-09 en Node.js y TypeScript. |
 
 ## Flujo propuesto
