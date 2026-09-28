@@ -1,0 +1,11 @@
+node_modules
+dist/
+*.tsbuildinfo
+
+# Credenciales locales
+.env
+.env.*
+!.env.example
+
+# Prisma Client se regenera a partir del esquema
+/generated/prisma/
