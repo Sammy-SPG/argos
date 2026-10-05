@@ -1,7 +1,7 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// Modelo basado en docs/Argos-Apex.png.
+// Modelos y enums en PascalCase; tablas SQL en singular y snake_case.
+// Atributos compuestos en camelCase con @map a los nombres del ER.
+// Los varchar sin longitud explícita usan el valor por defecto de Prisma/MySQL.
 
 generator client {
   provider     = "prisma-client"
@@ -16,7 +16,7 @@ datasource db {
 enum EstadoUsuario {
   activo
   inactivo
-  bloquedo
+  bloqueado
   eliminado
 }
 
@@ -26,15 +26,349 @@ enum RolUsuario {
   operador
 }
 
+enum TipoDispositivoUsuario {
+  android
+  ios
+  escritorio
+}
+
+enum EstadoSucursal {
+  activa
+  inactiva
+}
+
+enum DiaHorarioSemanalSucursal {
+  lunes
+  martes
+  miércoles
+  jueves
+  viernes
+  sábado
+  domingo
+}
+
+enum RolContactoSucursal {
+  emergencia
+  seguridad
+  administrativo
+}
+
+enum EstadoParticionSucursal {
+  activa
+  inactiva
+}
+
+enum EstadoZonaParticion {
+  activa
+  inactiva
+}
+
+enum EstadoSensorZona {
+  activo
+  inactivo
+  mantenimiento
+  eliminado
+}
+
+enum EstadoCamaraZona {
+  activa
+  inactiva
+  mantenimiento
+  eliminada
+}
+
+enum TipoEventoSucursal {
+  alerta
+  incidente
+  emergencia
+}
+
+enum AnomaliaEventoSucursal {
+  intrusión
+  incendio
+  falla_sistema
+}
+
+enum EstadoEventoSucursal {
+  activo
+  inactivo
+  en_resolución
+  resuelto
+}
+
+enum AccionResolucionEvento {
+  resuelto
+  ignorado
+  escalado
+}
+
 model Usuario {
   id             Int           @id @default(autoincrement())
   nombre         String
   apellido       String
-  contrasena_has String
+  contrasenaHash String        @map("contrasena_has")
   estado         EstadoUsuario
   rol            RolUsuario
-  creado         DateTime
-  actualizado    DateTime
+  creado         DateTime      @db.DateTime(0)
+  actualizado    DateTime      @db.DateTime(0)
+
+  sucursal     UsuarioSucursal?
+  dispositivos DispositivoUsuario[]
+  permisos     PermisoUsuario[]
+  bloqueos     BloqueoUsuario[]
+  resoluciones ResolucionEvento[]
 
   @@map("usuario")
+}
+
+model DispositivoUsuario {
+  id        Int                    @id @default(autoincrement())
+  usuarioId Int                    @map("usuario_id")
+  tipo      TipoDispositivoUsuario
+  token     String
+
+  usuario        Usuario              @relation(fields: [usuarioId], references: [id])
+  notificaciones NotificacionEvento[]
+
+  @@map("dispositivo_usuario")
+}
+
+model PermisoUsuario {
+  id          Int      @id @default(autoincrement())
+  usuarioId   Int      @map("usuario_id")
+  modulo      String
+  controlador String
+  creado      DateTime @db.DateTime(0)
+  actualizado DateTime @db.DateTime(0)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@map("permiso_usuario")
+}
+
+model PlantillaPermiso {
+  id          Int        @id @default(autoincrement())
+  rol         RolUsuario
+  modulo      String
+  controlador String
+
+  @@map("plantilla_permiso")
+}
+
+model BloqueoUsuario {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int      @map("usuario_id")
+  fecha     DateTime @db.DateTime(0)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@map("bloqueo_usuario")
+}
+
+model UsuarioSucursal {
+  id          Int      @id @default(autoincrement())
+  sucursalId  Int      @map("sucursal_id")
+  usuarioId   Int      @unique @map("usuario_id")
+  creado      DateTime @db.DateTime(0)
+  actualizado DateTime @db.DateTime(0)
+
+  sucursal Sucursal @relation(fields: [sucursalId], references: [id])
+  usuario  Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@map("usuario_sucursal")
+}
+
+model Sucursal {
+  id     Int            @id @default(autoincrement())
+  nombre String
+  estado EstadoSucursal
+
+  direccion   DireccionSucursal?
+  descansos   DescansoSucursal[]
+  horarios    HorarioSemanalSucursal[]
+  contactos   ContactoSucursal[]
+  usuarios    UsuarioSucursal[]
+  particiones ParticionSucursal[]
+  zonas       ZonaParticion[]
+  eventos     EventoSucursal[]
+
+  @@map("sucursal")
+}
+
+model Estado {
+  id     Int    @id @default(autoincrement())
+  nombre String
+  clave  String
+
+  direcciones DireccionSucursal[]
+
+  @@map("estado")
+}
+
+model Municipio {
+  id     Int    @id @default(autoincrement())
+  nombre String
+  clave  String
+
+  direcciones DireccionSucursal[]
+
+  @@map("municipio")
+}
+
+model DireccionSucursal {
+  id          Int    @id @default(autoincrement())
+  estadoId    Int    @map("estado_id")
+  municipioId Int    @map("municipio_id")
+
+  sucursalId  Int    @unique @map("sucursal_id")
+  cp          String @db.VarChar(5)
+  colonia     String @db.VarChar(30)
+  calle       String @db.VarChar(30)
+  numero      String @db.VarChar(10)
+
+  estado    Estado    @relation(fields: [estadoId], references: [id])
+  municipio Municipio @relation(fields: [municipioId], references: [id])
+  sucursal  Sucursal  @relation(fields: [sucursalId], references: [id])
+
+  @@map("direccion_sucursal")
+}
+
+model DescansoSucursal {
+  id         Int @id @default(autoincrement())
+  sucursalId Int @map("sucursal_id")
+  dia        Int
+  mes        Int
+
+  sucursal Sucursal @relation(fields: [sucursalId], references: [id])
+
+  @@map("descanso_sucursal")
+}
+
+model HorarioSemanalSucursal {
+  id         Int                       @id @default(autoincrement())
+  sucursalId Int                       @map("sucursal_id")
+  dia        DiaHorarioSemanalSucursal
+  entrada    DateTime                  @db.Time(0)
+  salida     DateTime                  @db.Time(0)
+
+  sucursal Sucursal @relation(fields: [sucursalId], references: [id])
+
+  @@map("horario_semanal_sucursal")
+}
+
+model ContactoSucursal {
+  id         Int                 @id @default(autoincrement())
+  sucursalId Int                 @map("sucursal_id")
+  nombre     String
+  telefono   String              @db.VarChar(10)
+  correo     String              @db.VarChar(60)
+  rol        RolContactoSucursal
+
+  sucursal Sucursal @relation(fields: [sucursalId], references: [id])
+
+  @@map("contacto_sucursal")
+}
+
+model ParticionSucursal {
+  id           Int                     @id @default(autoincrement())
+  sucursalId   Int                     @map("sucursal_id")
+  codigoCuenta String                  @map("codigo_cuenta")
+  estado       EstadoParticionSucursal
+
+  sucursal Sucursal        @relation(fields: [sucursalId], references: [id])
+  zonas    ZonaParticion[]
+
+  @@map("particion_sucursal")
+}
+
+model ZonaParticion {
+  id          Int                 @id @default(autoincrement())
+  particionId Int                 @map("particion_id")
+  sucursalId  Int                 @map("sucursal_id")
+  tipo        String
+  nombre      String
+  numero      String
+  descripcion String
+  estado      EstadoZonaParticion
+
+  particion ParticionSucursal @relation(fields: [particionId], references: [id])
+  sucursal  Sucursal          @relation(fields: [sucursalId], references: [id])
+  sensores  SensorZona[]
+  camaras   CamaraZona[]
+  eventos   EventoSucursal[]
+
+  @@map("zona_particion")
+}
+
+model SensorZona {
+  id              Int              @id @default(autoincrement())
+  zonaParticionId Int              @map("zona_particion_id")
+  numeroSerie     String           @map("numero_serie")
+  etiqueta        String
+  descripcion     String
+  estado          EstadoSensorZona
+
+  zonaParticion ZonaParticion @relation(fields: [zonaParticionId], references: [id])
+
+  @@map("sensor_zona")
+}
+
+model CamaraZona {
+  id              Int              @id @default(autoincrement())
+  zonaParticionId Int              @map("zonas_particion_id")
+  prioridad       Int
+  ip              String
+  urlStream       String           @map("url_stream")
+  estado          EstadoCamaraZona
+
+  zonaParticion ZonaParticion @relation(fields: [zonaParticionId], references: [id])
+
+  @@map("camara_zona")
+}
+
+model EventoSucursal {
+  id              Int                    @id @default(autoincrement())
+  sucursalId      Int                    @map("sucursal_id")
+  zonaParticionId Int                    @map("zona_particion_id")
+  tipo            TipoEventoSucursal
+  anomalia        AnomaliaEventoSucursal
+  estado          EstadoEventoSucursal
+  creado          DateTime               @db.DateTime(0)
+  actualizado     DateTime               @db.DateTime(0)
+
+  sucursal       Sucursal             @relation(fields: [sucursalId], references: [id])
+  zonaParticion  ZonaParticion        @relation(fields: [zonaParticionId], references: [id])
+  notificaciones NotificacionEvento[]
+  resolucion     ResolucionEvento?
+
+  @@map("evento_sucursal")
+}
+
+model NotificacionEvento {
+  id                   Int      @id @default(autoincrement())
+  eventoSucursalId     Int      @map("evento_sucursal_id")
+  dispositivoUsuarioId Int      @map("dispositivo_usuario_id")
+  enviado              DateTime @db.DateTime(0)
+  recibido             DateTime @db.DateTime(0)
+  abierto              DateTime @db.DateTime(0)
+
+  eventoSucursal     EventoSucursal     @relation(fields: [eventoSucursalId], references: [id])
+  dispositivoUsuario DispositivoUsuario @relation(fields: [dispositivoUsuarioId], references: [id])
+
+  @@map("notificacion_evento")
+}
+
+model ResolucionEvento {
+  id               Int                    @id @default(autoincrement())
+  eventoSucursalId Int                    @unique @map("evento_sucursal_id")
+  usuarioId        Int                    @map("usuario_id")
+  accion           AccionResolucionEvento
+  comentarios      String                 @db.Text
+  creado           DateTime               @db.DateTime(0)
+  actualizado      DateTime               @db.DateTime(0)
+
+  eventoSucursal EventoSucursal @relation(fields: [eventoSucursalId], references: [id])
+  usuario        Usuario        @relation(fields: [usuarioId], references: [id])
+
+  @@map("resolucion_evento")
 }
