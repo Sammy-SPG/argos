@@ -1,6 +1,6 @@
 // Modelo basado en docs/Argos-Apex.png.
 // Modelos y enums en PascalCase; tablas SQL en singular y snake_case.
-// Atributos compuestos en camelCase con @map a los nombres del ER.
+// Atributos compuestos en camelCase con @map a nombres SQL en snake_case.
 // Los varchar sin longitud explícita usan el valor por defecto de Prisma/MySQL.
 
 generator client {
@@ -30,6 +30,11 @@ enum TipoDispositivoUsuario {
   android
   ios
   escritorio
+}
+
+enum FormaFinalizacionBloqueo {
+  manual
+  automatica
 }
 
 enum EstadoSucursal {
@@ -90,47 +95,117 @@ enum AnomaliaEventoSucursal {
 }
 
 enum EstadoEventoSucursal {
-  activo
-  inactivo
-  en_resolución
+  pendiente
+  enAtencion @map("en_atencion")
+  confirmado
   resuelto
+  descartado
 }
 
 enum AccionResolucionEvento {
   resuelto
-  ignorado
+  descartado
+}
+
+enum EstadoRecepcionEvento {
+  pendiente
+  procesada
+  duplicada
+  error
+}
+
+enum FormaFinalizacionAtencion {
+  liberada
+  abandonoSesion    @map("abandono_sesion")
+  cierreEvento      @map("cierre_evento")
+  cuentaDesactivada @map("cuenta_desactivada")
+}
+
+enum AccionHistorialEvento {
+  registrado
+  atencionIniciada   @map("atencion_iniciada")
+  atencionLiberada   @map("atencion_liberada")
+  atencionAbandonada @map("atencion_abandonada")
+  confirmado
+  descartado
+  resuelto
   escalado
 }
 
-model Usuario {
-  id             Int           @id @default(autoincrement())
-  nombre         String
-  apellido       String
-  contrasenaHash String        @map("contrasena_has")
-  estado         EstadoUsuario
-  rol            RolUsuario
-  creado         DateTime      @db.DateTime(0)
-  actualizado    DateTime      @db.DateTime(0)
+enum EstadoNotificacionEvento {
+  pendiente
+  enviada
+  entregada
+  recibida
+  abierta
+  fallida
+  cancelada
+}
 
-  sucursal     UsuarioSucursal?
-  dispositivos DispositivoUsuario[]
-  permisos     PermisoUsuario[]
-  bloqueos     BloqueoUsuario[]
-  resoluciones ResolucionEvento[]
+enum EstadoIntentoNotificacion {
+  enProceso @map("en_proceso")
+  aceptado
+  fallido
+}
+
+model Usuario {
+  id               Int           @id @default(autoincrement())
+  nombre           String
+  apellido         String
+  numeroControl    String        @unique @map("numero_control")
+  contrasenaHash   String        @map("contrasena_has")
+  // Reiniciar tras autenticación exitosa o finalización del bloqueo.
+  intentosFallidos Int           @default(0) @map("intentos_fallidos")
+  estado           EstadoUsuario
+  rol              RolUsuario
+  creado           DateTime      @db.DateTime(0)
+  actualizado      DateTime      @db.DateTime(0)
+
+  sucursal         UsuarioSucursal?
+  sesiones         SesionUsuario[]
+  permisos         PermisoUsuario[]
+  // Relaciones de bloqueo: un usuario se bloquea automaticamente por intentos fallidos de inicio de sesión.
+  bloqueos         BloqueoUsuario[]     @relation("UsuarioBloqueado")
+  // Relaciones de desbloqueo: un usuario gerente o administrador puede desbloquear a otro usuario
+  desbloqueos      BloqueoUsuario[]     @relation("UsuarioDesbloqueador")
+  resoluciones     ResolucionEvento[]
+  atenciones       AtencionEvento[]
+  historialEventos HistorialEvento[]
+  notificaciones   NotificacionEvento[]
 
   @@map("usuario")
 }
 
-model DispositivoUsuario {
-  id        Int                    @id @default(autoincrement())
-  usuarioId Int                    @map("usuario_id")
-  tipo      TipoDispositivoUsuario
-  token     String
+model SesionUsuario {
+  id                 Int       @id @default(autoincrement())
+  usuarioId          Int       @map("usuario_id")
+  tokenHash          String    @unique @map("token_hash")
+  inicio             DateTime  @default(now()) @db.DateTime(0)
+  vencimiento        DateTime  @db.DateTime(0)
+  finalizada         DateTime? @db.DateTime(0)
+  motivoFinalizacion String?   @map("motivo_finalizacion")
 
-  usuario        Usuario              @relation(fields: [usuarioId], references: [id])
+  usuario      Usuario                    @relation(fields: [usuarioId], references: [id])
+  dispositivos DispositivoSesionUsuario[]
+  atenciones   AtencionEvento[]
+
+  @@index([usuarioId, finalizada, vencimiento])
+  @@map("sesion_usuario")
+}
+
+model DispositivoSesionUsuario {
+  id              Int                    @id @default(autoincrement())
+  sesionUsuarioId Int                    @map("sesion_usuario_id")
+  tipo            TipoDispositivoUsuario
+  token           String
+  creado          DateTime               @default(now()) @db.DateTime(0)
+  desactivado     DateTime?              @db.DateTime(0)
+
+  sesionUsuario  SesionUsuario        @relation(fields: [sesionUsuarioId], references: [id])
   notificaciones NotificacionEvento[]
 
-  @@map("dispositivo_usuario")
+  @@index([sesionUsuarioId, desactivado])
+  @@map("dispositivo_sesion_usuario")
 }
 
 model PermisoUsuario {
@@ -156,12 +231,20 @@ model PlantillaPermiso {
 }
 
 model BloqueoUsuario {
-  id        Int      @id @default(autoincrement())
-  usuarioId Int      @map("usuario_id")
-  fecha     DateTime @db.DateTime(0)
+  id                   Int                       @id @default(autoincrement())
+  usuarioId            Int                       @map("usuario_id")
+  fecha                DateTime                  @db.DateTime(0)
+  vencimientoPrevisto  DateTime                  @map("vencimiento_previsto") @db.DateTime(0)
+  finalizacionEfectiva DateTime?                 @map("finalizacion_efectiva") @db.DateTime(0)
+  formaFinalizacion    FormaFinalizacionBloqueo? @map("forma_finalizacion")
+  desbloqueadoPorId    Int?                      @map("desbloqueado_por")
+  // Obligatorio al desbloquear manualmente; el actor es nulo al vencer automáticamente.
+  motivo               String?                   @db.Text
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id])
+  usuario         Usuario  @relation("UsuarioBloqueado", fields: [usuarioId], references: [id])
+  desbloqueadoPor Usuario? @relation("UsuarioDesbloqueador", fields: [desbloqueadoPorId], references: [id])
 
+  @@index([usuarioId, vencimientoPrevisto])
   @@map("bloqueo_usuario")
 }
 
@@ -179,9 +262,10 @@ model UsuarioSucursal {
 }
 
 model Sucursal {
-  id     Int            @id @default(autoincrement())
-  nombre String
-  estado EstadoSucursal
+  id          Int            @id @default(autoincrement())
+  nombre      String
+  estado      EstadoSucursal
+  zonaHoraria String         @map("zona_horaria")
 
   direccion   DireccionSucursal?
   descansos   DescansoSucursal[]
@@ -216,15 +300,15 @@ model Municipio {
 }
 
 model DireccionSucursal {
-  id          Int    @id @default(autoincrement())
-  estadoId    Int    @map("estado_id")
-  municipioId Int    @map("municipio_id")
+  id          Int @id @default(autoincrement())
+  estadoId    Int @map("estado_id")
+  municipioId Int @map("municipio_id")
 
-  sucursalId  Int    @unique @map("sucursal_id")
-  cp          String @db.VarChar(5)
-  colonia     String @db.VarChar(30)
-  calle       String @db.VarChar(30)
-  numero      String @db.VarChar(10)
+  sucursalId Int    @unique @map("sucursal_id")
+  cp         String @db.VarChar(5)
+  colonia    String @db.VarChar(30)
+  calle      String @db.VarChar(30)
+  numero     String @db.VarChar(10)
 
   estado    Estado    @relation(fields: [estadoId], references: [id])
   municipio Municipio @relation(fields: [municipioId], references: [id])
@@ -283,7 +367,7 @@ model ParticionSucursal {
 
 model ZonaParticion {
   id          Int                 @id @default(autoincrement())
-  particionId Int                 @map("particion_id")
+  particionId Int?                @map("particion_id")
   sucursalId  Int                 @map("sucursal_id")
   tipo        String
   nombre      String
@@ -291,8 +375,9 @@ model ZonaParticion {
   descripcion String
   estado      EstadoZonaParticion
 
-  particion ParticionSucursal @relation(fields: [particionId], references: [id])
-  sucursal  Sucursal          @relation(fields: [sucursalId], references: [id])
+  // Cuando exista, la partición debe pertenecer a la misma sucursal.
+  particion ParticionSucursal? @relation(fields: [particionId], references: [id])
+  sucursal  Sucursal           @relation(fields: [sucursalId], references: [id])
   sensores  SensorZona[]
   camaras   CamaraZona[]
   eventos   EventoSucursal[]
@@ -326,36 +411,154 @@ model CamaraZona {
   @@map("camara_zona")
 }
 
+model RecepcionEvento {
+  id                 Int                   @id @default(autoincrement())
+  eventoSucursalId   Int?                  @map("evento_sucursal_id")
+  origen             String
+  codigoExterno      String?               @map("codigo_externo")
+  claveDeduplicacion String?               @map("clave_deduplicacion") @db.VarChar(191)
+  contenido          Json
+  ocurrido           DateTime?             @db.DateTime(0)
+  recibido           DateTime              @default(now()) @db.DateTime(0)
+  // Fin del procesamiento técnico de la recepción, no de la atención ni del envío de avisos.
+  procesado          DateTime?             @db.DateTime(0)
+  estado             EstadoRecepcionEvento @default(pendiente)
+  error              String?               @db.Text
+
+  eventoSucursal EventoSucursal? @relation(fields: [eventoSucursalId], references: [id])
+
+  // Los reenvíos conservan su recepción y apuntan al mismo evento operativo.
+  @@index([claveDeduplicacion])
+  @@index([estado, recibido])
+  @@map("recepcion_evento")
+}
+
 model EventoSucursal {
-  id              Int                    @id @default(autoincrement())
-  sucursalId      Int                    @map("sucursal_id")
-  zonaParticionId Int                    @map("zona_particion_id")
-  tipo            TipoEventoSucursal
-  anomalia        AnomaliaEventoSucursal
-  estado          EstadoEventoSucursal
-  creado          DateTime               @db.DateTime(0)
-  actualizado     DateTime               @db.DateTime(0)
+  id                 Int                    @id @default(autoincrement())
+  sucursalId         Int                    @map("sucursal_id")
+  zonaParticionId    Int                    @map("zona_particion_id")
+  tipo               TipoEventoSucursal
+  anomalia           AnomaliaEventoSucursal
+  estado             EstadoEventoSucursal   @default(pendiente)
+  // Clave interna que identifica la señal original, considerando su origen.
+  claveDeduplicacion String                 @unique @map("clave_deduplicacion") @db.VarChar(191)
+  creado             DateTime               @db.DateTime(0)
+  actualizado        DateTime               @db.DateTime(0)
 
   sucursal       Sucursal             @relation(fields: [sucursalId], references: [id])
   zonaParticion  ZonaParticion        @relation(fields: [zonaParticionId], references: [id])
   notificaciones NotificacionEvento[]
   resolucion     ResolucionEvento?
+  recepciones    RecepcionEvento[]
+  atenciones     AtencionEvento[]
+  historial      HistorialEvento[]
+  escalamientos  EscalamientoEvento[]
 
+  @@index([sucursalId, estado, creado])
+  @@index([sucursalId, creado])
   @@map("evento_sucursal")
 }
 
+model AtencionEvento {
+  id                Int                        @id @default(autoincrement())
+  eventoSucursalId  Int                        @map("evento_sucursal_id")
+  usuarioId         Int                        @map("usuario_id")
+  sesionUsuarioId   Int                        @map("sesion_usuario_id")
+  inicio            DateTime                   @default(now()) @db.DateTime(0)
+  finalizada        DateTime?                  @db.DateTime(0)
+  formaFinalizacion FormaFinalizacionAtencion? @map("forma_finalizacion")
+  motivo            String?                    @db.Text
+  // Usar true mientras está vigente y NULL al finalizar; nunca false.
+  // Los únicos admiten múltiples atenciones históricas con NULL en MySQL.
+  vigente           Boolean?                   @default(true)
+
+  eventoSucursal EventoSucursal    @relation(fields: [eventoSucursalId], references: [id])
+  usuario        Usuario           @relation(fields: [usuarioId], references: [id])
+  sesionUsuario  SesionUsuario     @relation(fields: [sesionUsuarioId], references: [id])
+  historial      HistorialEvento[]
+
+  // Finalización, liberación de vigencia y transición del evento deben ser atómicas.
+  @@unique([eventoSucursalId, vigente])
+  @@unique([usuarioId, vigente])
+  @@index([sesionUsuarioId, vigente])
+  @@map("atencion_evento")
+}
+
+model HistorialEvento {
+  id               Int                   @id @default(autoincrement())
+  eventoSucursalId Int                   @map("evento_sucursal_id")
+  atencionEventoId Int?                  @map("atencion_evento_id")
+  // Nulo identifica una acción automática del sistema.
+  usuarioId        Int?                  @map("usuario_id")
+  accion           AccionHistorialEvento
+  estadoAnterior   EstadoEventoSucursal? @map("estado_anterior")
+  // Estado resultante de esta acción; conserva su valor histórico.
+  estado           EstadoEventoSucursal?
+  observacion      String?               @db.Text
+  fecha            DateTime              @default(now()) @db.DateTime(0)
+
+  eventoSucursal EventoSucursal  @relation(fields: [eventoSucursalId], references: [id])
+  atencionEvento AtencionEvento? @relation(fields: [atencionEventoId], references: [id])
+  // No convertir acciones humanas en automáticas al eliminar un usuario.
+  usuario        Usuario?        @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+
+  @@index([eventoSucursalId, fecha, id])
+  @@map("historial_evento")
+}
+
+model EscalamientoEvento {
+  id               Int        @id @default(autoincrement())
+  eventoSucursalId Int        @map("evento_sucursal_id")
+  rolOrigen        RolUsuario @map("rol_origen")
+  rolDestino       RolUsuario @map("rol_destino")
+  fecha            DateTime   @default(now()) @db.DateTime(0)
+
+  eventoSucursal EventoSucursal       @relation(fields: [eventoSucursalId], references: [id])
+  notificaciones NotificacionEvento[]
+
+  @@index([eventoSucursalId, fecha])
+  @@map("escalamiento_evento")
+}
+
 model NotificacionEvento {
-  id                   Int      @id @default(autoincrement())
-  eventoSucursalId     Int      @map("evento_sucursal_id")
-  dispositivoUsuarioId Int      @map("dispositivo_usuario_id")
-  enviado              DateTime @db.DateTime(0)
-  recibido             DateTime @db.DateTime(0)
-  abierto              DateTime @db.DateTime(0)
+  id                         Int                      @id @default(autoincrement())
+  eventoSucursalId           Int                      @map("evento_sucursal_id")
+  dispositivoSesionUsuarioId Int                      @map("dispositivo_sesion_usuario_id")
+  destinatarioId             Int                      @map("destinatario_id")
+  escalamientoEventoId       Int?                     @map("escalamiento_evento_id")
+  estado                     EstadoNotificacionEvento @default(pendiente)
+  creado                     DateTime                 @default(now()) @db.DateTime(0)
+  enviado                    DateTime?                @db.DateTime(0)
+  entregado                  DateTime?                @db.DateTime(0)
+  recibido                   DateTime?                @db.DateTime(0)
+  abierto                    DateTime?                @db.DateTime(0)
 
-  eventoSucursal     EventoSucursal     @relation(fields: [eventoSucursalId], references: [id])
-  dispositivoUsuario DispositivoUsuario @relation(fields: [dispositivoUsuarioId], references: [id])
+  eventoSucursal           EventoSucursal           @relation(fields: [eventoSucursalId], references: [id])
+  dispositivoSesionUsuario DispositivoSesionUsuario @relation(fields: [dispositivoSesionUsuarioId], references: [id])
+  destinatario             Usuario                  @relation(fields: [destinatarioId], references: [id])
+  escalamientoEvento       EscalamientoEvento?      @relation(fields: [escalamientoEventoId], references: [id])
+  intentos                 IntentoNotificacion[]
 
+  @@unique([eventoSucursalId, dispositivoSesionUsuarioId, destinatarioId])
+  @@index([eventoSucursalId, estado])
+  @@index([destinatarioId, creado])
   @@map("notificacion_evento")
+}
+
+model IntentoNotificacion {
+  id                   Int                       @id @default(autoincrement())
+  notificacionEventoId Int                       @map("notificacion_evento_id")
+  numero               Int
+  estado               EstadoIntentoNotificacion @default(enProceso)
+  inicio               DateTime                  @default(now()) @db.DateTime(0)
+  finalizado           DateTime?                 @db.DateTime(0)
+  identificadorExterno String?                   @map("identificador_externo")
+  error                String?                   @db.Text
+
+  notificacionEvento NotificacionEvento @relation(fields: [notificacionEventoId], references: [id])
+
+  @@unique([notificacionEventoId, numero])
+  @@map("intento_notificacion")
 }
 
 model ResolucionEvento {
