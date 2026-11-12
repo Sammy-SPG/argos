@@ -55,6 +55,12 @@ npm run redis:check
 
 El backend requiere Redis disponible para iniciar. La caché tiene un TTL predeterminado de una hora y utiliza un prefijo por entorno. Consulta la [guía de Redis](src/redis/README.md) para generar la contraseña, cambiar puertos, detener el contenedor y utilizar la conexión desde otros módulos. La aplicación de permisos mediante Redis todavía está pendiente.
 
+## Autorización y matriz de permisos
+
+La [matriz propuesta](src/autorizacion/README.md) contiene los permisos de administrador, gerente y operador, su alcance, las condiciones de cada operación y su referencia a los requerimientos funcionales. También organiza los módulos y controladores previstos y señala las decisiones pendientes de revisión.
+
+Por ahora la matriz es documentación editable; todavía no carga permisos en la base de datos ni autoriza endpoints. Su configuración TypeScript, el guard y `@RequierePermiso(...)` corresponden a la implementación del módulo de autorización.
+
 ## Usuarios iniciales
 
 Los scripts de datos iniciales están en `scripts/seeds/`, separados de las migraciones del esquema de Prisma. Con las migraciones aplicadas, el cliente generado y las variables de conexión configuradas en `.env`, ejecuta desde `backend/`:

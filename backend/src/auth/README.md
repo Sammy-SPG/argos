@@ -4,6 +4,8 @@
 
 Identificar al usuario mediante su número de control y contraseña, registrar su sesión y comprobar que esa sesión siga vigente. El servicio puede utilizarse desde otros componentes mediante `AuthService.validarSesion(token)`.
 
+La [matriz de autorización propuesta](../autorizacion/README.md) define por separado qué puede hacer cada rol, sus alcances y las restricciones de los recursos. Su aplicación mediante guards y permisos individuales todavía está pendiente; este módulo proporciona la identidad y el contexto de sesión que utilizará esa autorización.
+
 ## Alcance y responsabilidades
 
 El módulo es responsable de:

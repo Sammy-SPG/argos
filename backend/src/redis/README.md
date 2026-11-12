@@ -2,7 +2,7 @@
 
 Redis queda configurado como almacenamiento compartido de caché para el backend. El primer consumidor previsto es la autorización: conservar temporalmente los permisos de cada usuario y eliminarlos de caché cuando cambien.
 
-Esta configuración incorpora la conexión, operaciones JSON con TTL, un servicio local en Docker Compose y una comprobación de integración. La matriz de roles, el servicio de permisos y el decorador `@RequierePermiso(...)` todavía no están implementados. Actualmente ninguna solicitud consulta permisos mediante Redis.
+Esta configuración incorpora la conexión, operaciones JSON con TTL, un servicio local en Docker Compose y una comprobación de integración. La [matriz de roles y permisos](../autorizacion/README.md) está documentada como propuesta revisable; el servicio de permisos y el decorador `@RequierePermiso(...)` todavía no están implementados. Actualmente ninguna solicitud consulta permisos mediante Redis.
 
 ## Arquitectura y acceso privado en producción
 
