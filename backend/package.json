@@ -11,6 +11,10 @@
     "typecheck": "tsc --noEmit",
     "seed:usuarios": "tsx scripts/seeds/usuarios-iniciales.ts",
     "jwt:generar": "tsx scripts/generar-jwt.ts",
+    "redis:up": "docker compose -f compose.redis.yaml up -d --wait redis",
+    "redis:down": "docker compose -f compose.redis.yaml down",
+    "redis:logs": "docker compose -f compose.redis.yaml logs --tail=100 -f redis",
+    "redis:check": "tsx scripts/comprobar-redis.ts",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
@@ -34,6 +38,7 @@
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
+    "redis": "^6.3.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

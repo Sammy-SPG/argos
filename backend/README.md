@@ -19,7 +19,7 @@ npm install @prisma/client@7 @prisma/adapter-mariadb
 npx prisma init --datasource-provider mysql --output ../generated/prisma
 ```
 
-El esquema vigente está basado en `docs/Argos-Apex.png`. El módulo de autenticación está en `src/auth/` y su configuración, rutas y responsabilidades se documentan en [su README](src/auth/README.md). La administración de usuarios sigue pendiente. Los nombres y campos vigentes son los de `prisma/schema.prisma`.
+El esquema vigente está basado en `docs/Argos-Apex.png`. El módulo de autenticación está en `src/auth/` y su configuración, rutas y responsabilidades se documentan en [su README](src/auth/README.md). La conexión compartida de Redis, sus variables y el servicio local se documentan en [Redis](src/redis/README.md). La administración de usuarios sigue pendiente. Los nombres y campos vigentes son los de `prisma/schema.prisma`.
 
 ## Preparar una instalación local
 
@@ -43,6 +43,17 @@ npx prisma generate
 ```
 
 Para crear una migración nueva durante el desarrollo, edita `prisma/schema.prisma` y ejecuta `npx prisma migrate dev --name nombre_del_cambio`. Confirma en Git tanto el esquema como los archivos de la nueva migración. `generated/prisma/`, `dist/` y `.env` quedan fuera del repositorio; el cliente debe generarse también en una instalación nueva o en CI.
+
+## Redis local
+
+Completa las variables `REDIS_*` de `.env.example` en tu `.env`, genera una contraseña propia para `REDIS_PASSWORD` y, con Docker iniciado, ejecuta:
+
+```bash
+npm run redis:up
+npm run redis:check
+```
+
+El backend requiere Redis disponible para iniciar. La caché tiene un TTL predeterminado de una hora y utiliza un prefijo por entorno. Consulta la [guía de Redis](src/redis/README.md) para generar la contraseña, cambiar puertos, detener el contenedor y utilizar la conexión desde otros módulos. La aplicación de permisos mediante Redis todavía está pendiente.
 
 ## Usuarios iniciales
 
