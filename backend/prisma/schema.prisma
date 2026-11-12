@@ -148,6 +148,19 @@ enum EstadoIntentoNotificacion {
   fallido
 }
 
+enum AccionPermisoUsuario {
+  crear
+  listar
+  consultar
+  actualizar
+  eliminar
+}
+
+enum AlcancePermisoUsuario {
+  global
+  asignado
+}
+
 model Usuario {
   id               Int           @id @default(autoincrement())
   nombre           String
@@ -209,25 +222,18 @@ model DispositivoSesionUsuario {
 }
 
 model PermisoUsuario {
-  id          Int      @id @default(autoincrement())
-  usuarioId   Int      @map("usuario_id")
+  id          Int                   @id @default(autoincrement())
+  usuarioId   Int                   @map("usuario_id")
   modulo      String
-  controlador String
-  creado      DateTime @db.DateTime(0)
-  actualizado DateTime @db.DateTime(0)
+  accion      AccionPermisoUsuario
+  alcance     AlcancePermisoUsuario
+  creado      DateTime              @db.DateTime(0)
+  actualizado DateTime              @db.DateTime(0)
 
   usuario Usuario @relation(fields: [usuarioId], references: [id])
 
+  @@unique([usuarioId, modulo, accion])
   @@map("permiso_usuario")
-}
-
-model PlantillaPermiso {
-  id          Int        @id @default(autoincrement())
-  rol         RolUsuario
-  modulo      String
-  controlador String
-
-  @@map("plantilla_permiso")
 }
 
 model BloqueoUsuario {
@@ -266,8 +272,12 @@ model Sucursal {
   nombre      String
   estado      EstadoSucursal
   zonaHoraria String         @map("zona_horaria")
+  municipioId Int            @map("municipio_id")
+  calle       String         @db.VarChar(30)
+  numero      String         @db.VarChar(10)
+  colonia     String         @db.VarChar(30)
+  cp          String         @db.VarChar(5)
 
-  direccion   DireccionSucursal?
   descansos   DescansoSucursal[]
   horarios    HorarioSemanalSucursal[]
   contactos   ContactoSucursal[]
@@ -276,45 +286,32 @@ model Sucursal {
   zonas       ZonaParticion[]
   eventos     EventoSucursal[]
 
+  municipio Municipio @relation(fields: [municipioId], references: [id])
+
   @@map("sucursal")
 }
 
 model Estado {
   id     Int    @id @default(autoincrement())
   nombre String
-  clave  String
+  clave  String?
 
-  direcciones DireccionSucursal[]
+  municipios Municipio[]
 
   @@map("estado")
 }
 
 model Municipio {
-  id     Int    @id @default(autoincrement())
-  nombre String
-  clave  String
+  id       Int    @id @default(autoincrement())
+  estadoId Int    @map("estado_id")
+  nombre   String
+  clave    String?
 
-  direcciones DireccionSucursal[]
+  estado Estado @relation(fields: [estadoId], references: [id])
+
+  sucursales Sucursal[]
 
   @@map("municipio")
-}
-
-model DireccionSucursal {
-  id          Int @id @default(autoincrement())
-  estadoId    Int @map("estado_id")
-  municipioId Int @map("municipio_id")
-
-  sucursalId Int    @unique @map("sucursal_id")
-  cp         String @db.VarChar(5)
-  colonia    String @db.VarChar(30)
-  calle      String @db.VarChar(30)
-  numero     String @db.VarChar(10)
-
-  estado    Estado    @relation(fields: [estadoId], references: [id])
-  municipio Municipio @relation(fields: [municipioId], references: [id])
-  sucursal  Sucursal  @relation(fields: [sucursalId], references: [id])
-
-  @@map("direccion_sucursal")
 }
 
 model DescansoSucursal {
@@ -529,7 +526,6 @@ model NotificacionEvento {
   estado                     EstadoNotificacionEvento @default(pendiente)
   creado                     DateTime                 @default(now()) @db.DateTime(0)
   enviado                    DateTime?                @db.DateTime(0)
-  entregado                  DateTime?                @db.DateTime(0)
   recibido                   DateTime?                @db.DateTime(0)
   abierto                    DateTime?                @db.DateTime(0)
 
