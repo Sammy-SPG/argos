@@ -61,6 +61,28 @@ La [matriz propuesta](src/autorizacion/README.md) contiene los permisos de admin
 
 Por ahora la matriz es documentación editable; todavía no carga permisos en la base de datos ni autoriza endpoints. Su configuración TypeScript, el guard y `@RequierePermiso(...)` corresponden a la implementación del módulo de autorización.
 
+## Catálogos de estados y municipios
+
+La semilla `scripts/seeds/catalogos-geograficos.ts` lee `db/estados.json` y `db/municipios.json` en UTF-8. Convierte los IDs de texto a enteros, conserva los IDs originales y relaciona cada municipio mediante `estado_id` → `estadoId`.
+
+Con las migraciones aplicadas (incluida la que permite `clave = NULL`), el cliente de Prisma generado y las variables de MySQL configuradas en `.env`, ejecuta desde `backend/`:
+
+```bash
+npm run seed:geografia
+```
+
+Para comprobar únicamente los archivos, sin abrir la conexión a MySQL:
+
+```bash
+npm run seed:geografia -- --validar
+```
+
+La validación detecta JSON inválido, IDs duplicados o fuera del rango de `Int`, nombres vacíos o demasiado largos y municipios que referencian estados ausentes del catálogo. Los archivos actuales contienen 32 estados y 2,458 municipios.
+
+La importación crea primero los estados y después los municipios, mediante inserciones por catálogo dentro de una sola transacción. Se puede repetir: los IDs existentes conservan sus nombres, claves y demás datos; solo se crean los ausentes, con `clave: null`. No elimina registros que falten del JSON. Si un municipio existente pertenece a otro estado distinto al indicado en el archivo, se cancela la carga para no reasignarlo silenciosamente.
+
+El resultado indica registros del archivo, creados y existentes por catálogo. Un error cancela la transacción y el proceso termina con código distinto de cero. La conexión se cierra al finalizar; no se necesita Redis para ejecutar esta semilla.
+
 ## Usuarios iniciales
 
 Los scripts de datos iniciales están en `scripts/seeds/`, separados de las migraciones del esquema de Prisma. Con las migraciones aplicadas, el cliente generado y las variables de conexión configuradas en `.env`, ejecuta desde `backend/`:
