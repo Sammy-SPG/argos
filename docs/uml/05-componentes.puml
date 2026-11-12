@@ -1,0 +1,75 @@
+@startuml
+!pragma layout smetana
+title Argos · 5. Componentes e interfaces (arquitectura propuesta)
+left to right direction
+skinparam backgroundColor white
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam componentStyle uml2
+skinparam packageStyle rectangle
+skinparam ArrowColor #475569
+skinparam nodesep 80
+skinparam ranksep 70
+
+package "Clientes · previstos" #FFF7ED {
+  component "Cliente Android\nFlutter" as Android
+  component "Cliente Windows\nFlutter" as Windows
+}
+
+interface "API de clientes\nHTTPS / JSON" as IClientes
+interface "Entrada de señales\ncontrato por acordar" as IIngreso
+
+package "Servidor Argos · backend NestJS" #EFF6FF {
+  component "Controladores API\nauth actual; otros previstos" as API
+  component "Identidad y sesiones\nAuthModule / AuthService\n[existente]" as Auth
+  component "Aplicación de negocio · prevista" as Negocio {
+    component "Usuarios y autorización" as Usuarios
+    component "Sucursales y operación" as Sucursales
+    component "Infraestructura de monitoreo" as Infra
+    component "Eventos y monitoreo" as Eventos
+    component "Avisos y escalamiento" as Avisos
+    component "Video y contexto" as Video
+  }
+  component "Persistencia\nPrisma + adaptador MariaDB\n[existente]" as Persistencia
+}
+
+component "Emisor / receptor autorizado\nruta pendiente de validar" as Emisor
+package "Servicios externos · integración prevista" {
+  component "FCM\nintegración prevista" as FCM
+  component "Cámaras / servicio de video\ncontrato por validar" as Camaras
+  interface "Stream autorizado\nprotocolo por validar" as IStream
+}
+database "MySQL / MariaDB" as DB
+interface "Canal de escritorio\nWSS propuesto" as IEscritorio
+
+Android ..> IClientes
+Windows ..> IClientes
+IClientes -right- API : ofrece
+IIngreso -right- API : ofrece
+Emisor ..> IIngreso : entrega señal
+API ..> Auth : validar identidad y sesión
+API ..> Negocio : ejecutar operación autorizada
+Eventos -[dashed,norank]-> Sucursales : horario
+Eventos -[dashed,norank]-> Infra : zona
+Eventos -[dashed,norank]-> Avisos : activar / detener
+Video -[dashed,norank]-> Infra : cámara
+Auth ..> Persistencia
+Negocio ..> Persistencia : leer / guardar
+Persistencia ..> DB
+Avisos ..> FCM : solicitar envío
+Android -[dashed,norank]-> FCM : recibir avisos mediante SDK
+IEscritorio -right- Avisos : ofrece
+Windows ..> IEscritorio : mantiene conexión
+Camaras -left- IStream : ofrece
+Android ..> IStream : reproduce
+Windows ..> IStream : reproduce
+legend bottom
+  Círculos: interfaces ofrecidas. Flechas discontinuas: uso o dependencia.
+  AuthService valida identidad y sesión; la autorización corresponde a la aplicación de negocio.
+  La aplicación de negocio utiliza la persistencia compartida para sus módulos.
+  Componentes lógicos: no implican un microservicio ni un servidor por módulo.
+  Video directo al cliente, FCM, WSS y entrada de señales requieren validación.
+  La API autoriza el contexto de video antes de reproducir; la ruta de red está por definir.
+endlegend
+@enduml

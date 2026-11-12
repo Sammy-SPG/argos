@@ -1,0 +1,96 @@
+@startuml
+title Argos · 3. Tomar la atención exclusiva de un evento
+skinparam backgroundColor white
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+autonumber
+
+actor "Usuario autorizado\n(operador, gerente o administrador)" as Usuario
+boundary "cliente: ClienteArgos\n[previsto]" as Cliente
+control "api: EventosController\n[propuesto]" as API
+control "auth: AuthService\n[existente]" as Auth
+control "permisos: AutorizacionService\n[propuesto]" as Permisos
+control "eventos: EventosService\n[propuesto]" as Eventos
+database "db: MySQL / MariaDB" as DB
+
+note over Usuario, DB
+  Precondición: el evento ya fue registrado y el cliente posee un token.
+  Esta secuencia propone la operación de atención; solo AuthService existe actualmente.
+end note
+
+Usuario -> Cliente : Seleccionar «Tomar atención»
+activate Cliente
+Cliente -> API : tomarAtencion(eventoId, token)
+activate API
+API -> Auth : validarSesion(token)
+activate Auth
+Auth -> Auth : Verificar firma y datos del JWT
+Auth -> DB : Consultar sesión y usuario actuales
+activate DB
+DB --> Auth : Sesión, vencimiento y estado de cuenta
+deactivate DB
+Auth --> API : SesionAutenticada o error
+deactivate Auth
+
+break token inválido o sesión no vigente
+  API --> Cliente : 401 · Solicitar nuevo inicio de sesión
+  Cliente --> Usuario : Mostrar acceso requerido
+end
+
+API -> Permisos : autorizarTomarAtencion(sesion, eventoId)
+activate Permisos
+Permisos -> DB : Consultar sucursal del evento y alcance del usuario
+activate DB
+DB --> Permisos : Contexto actual para autorizar
+deactivate DB
+Permisos --> API : Permitido o denegado
+deactivate Permisos
+
+break acción fuera del rol o de la sucursal permitida
+  API --> Cliente : 403 · Acción no autorizada
+  Cliente --> Usuario : Mostrar restricción de acceso
+end
+
+API -> Eventos : tomarAtencion(eventoId, sesion)
+activate Eventos
+Eventos -> DB : Iniciar transacción y bloquear filas de control
+activate DB
+Eventos -> DB : Leer estado, atención vigente y ocupación del usuario
+DB --> Eventos : Datos actuales bajo bloqueo
+
+note over Eventos, DB
+  Orden de bloqueo coherente y restricciones únicas.
+  Verificar de nuevo las condiciones que puedan cambiar.
+  La persistencia del esquema por sí sola no implementa este servicio.
+end note
+
+alt evento cerrado, ya tiene encargado o usuario ocupado
+  Eventos -> DB : Terminar transacción sin modificar atención
+  DB --> Eventos : Sin cambios
+  Eventos --> API : Conflicto de atención
+  API --> Cliente : 409 · Refrescar estado del evento
+  Cliente --> Usuario : Mostrar situación actual
+else evento atendible, sin encargado y usuario disponible
+  Eventos -> DB : Crear AtencionEvento(usuario, sesión, vigente=true)
+  Eventos -> DB : Si pendiente: pasar a enAtencion; si confirmado: conservarlo
+  Eventos -> DB : Registrar HistorialEvento y detener avisos pendientes
+  Eventos -> DB : Confirmar transacción
+  DB --> Eventos : Atención persistida
+  Eventos --> API : Evento con encargado y estado resultante
+  API --> Cliente : 200 · Atención asignada
+  Cliente --> Usuario : Mostrar contexto y acciones de atención
+end
+deactivate DB
+deactivate Eventos
+deactivate API
+deactivate Cliente
+
+note over Usuario, DB
+  Confirmar, descartar y resolver son solicitudes posteriores independientes.
+  Cada solicitud vuelve a validar sesión, autorización y encargado vigente.
+  Las líneas discontinuas son respuestas; las barras representan activaciones.
+end note
+@enduml

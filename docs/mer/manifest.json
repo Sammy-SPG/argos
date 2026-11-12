@@ -1,0 +1,58 @@
+{
+  "schema_sha256": "2af41fabc2c5b527be1864e8c317348e78e6316d893db525b538ecc4012ab1f9",
+  "entities": 26,
+  "relations": 35,
+  "attributes": 137,
+  "enums": 20,
+  "pages": [
+    {
+      "slug": "00-vista-general",
+      "entities": 11,
+      "relations": 11,
+      "shapes": 75,
+      "connections": 44
+    },
+    {
+      "slug": "01-usuarios-acceso",
+      "entities": 6,
+      "relations": 5,
+      "shapes": 67,
+      "connections": 46
+    },
+    {
+      "slug": "02-sucursales-territorio",
+      "entities": 9,
+      "relations": 8,
+      "shapes": 74,
+      "connections": 47
+    },
+    {
+      "slug": "03-infraestructura",
+      "entities": 5,
+      "relations": 5,
+      "shapes": 50,
+      "connections": 30
+    },
+    {
+      "slug": "04-eventos-recepcion",
+      "entities": 4,
+      "relations": 3,
+      "shapes": 42,
+      "connections": 25
+    },
+    {
+      "slug": "05-atencion-historial",
+      "entities": 6,
+      "relations": 8,
+      "shapes": 61,
+      "connections": 36
+    },
+    {
+      "slug": "06-notificaciones",
+      "entities": 6,
+      "relations": 6,
+      "shapes": 55,
+      "connections": 33
+    }
+  ]
+}

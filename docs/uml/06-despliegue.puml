@@ -1,0 +1,65 @@
+@startuml
+!pragma layout smetana
+title Argos · 6. Despliegue mínimo de referencia (propuesto)
+left to right direction
+skinparam backgroundColor white
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam ArrowColor #475569
+skinparam nodeBackgroundColor #EFF6FF
+skinparam nodeBorderColor #2563EB
+
+node "Teléfono del usuario" as Telefono <<device>> {
+  node "Android" <<executionEnvironment>> {
+    artifact "Argos Android\nFlutter · previsto" as AppAndroid
+  }
+}
+node "Equipo del usuario" as PC <<device>> {
+  node "Windows" <<executionEnvironment>> {
+    artifact "Argos Windows\nFlutter · previsto" as AppWindows
+  }
+}
+
+node "Servidor Argos · físico o VM\nubicación y SO por definir" as Servidor <<device>> {
+  node "Node.js" as Node <<executionEnvironment>> {
+    artifact "API NestJS\nPrisma + adaptador MariaDB" as API
+    artifact "A. Receptor propio\nopcional; por decidir" as ReceptorPropio
+  }
+  node "MySQL o MariaDB" as Motor <<executionEnvironment>> {
+    database "Base de datos Argos\nconfiguración y operación" as DB
+  }
+}
+
+cloud "Proveedor de notificaciones" {
+  node "Firebase Cloud Messaging\nprevisto" as FCM <<externalService>>
+}
+node "B. Receptor externo\nopcional; por decidir" as ReceptorExterno <<externalService>>
+
+frame "Red de equipos de la sucursal" as RedSucursal {
+  node "Panel HS2032 / HS2064 / HS2128\n+ comunicador LE4050M" as Panel <<device>>
+  node "Cámara IP / servicio de video\nprotocolo por validar" as Camara <<device>>
+}
+
+Telefono -right-> Servidor : HTTPS · API
+PC -right-> Servidor : HTTPS · API\nWSS · avisos propuestos
+API -down-> DB : conexión SQL interna\nmediante Prisma
+Servidor -right-> FCM : HTTPS · solicitud de aviso
+FCM -[dashed,norank]-> Telefono : push / enlace al evento
+Panel -right-> Servidor
+Panel -right-> ReceptorExterno : B. canal del receptor\ncontrato por validar
+ReceptorPropio -down-> API : HTTP interno autenticado\ncontrato por definir
+ReceptorExterno -right-> Servidor : reenvío HTTP(S) autenticado
+Telefono -[dashed,norank]-> Camara : stream autorizado
+PC -[dashed,norank]-> Camara : stream autorizado
+legend bottom
+  Dispositivos: nodos físicos. Entornos: software que ejecuta artefactos.
+  Líneas entre equipos: comunicaciones; dentro del servidor: interacciones de artefactos.
+  A: canal directo al receptor propio. B: reenvío desde un receptor externo.
+  A y B son alternativas. Validar el equipo antes de elegir; no se afirma HTTP nativo ni DC-09 confirmado.
+  DSC Connect Installer configura el equipo; no se presupone como intermediario permanente.
+  La reproducción requiere una ruta autorizada hasta las cámaras o un intermediario por definir.
+  Topología propuesta: auth y esquema existentes; clientes e integraciones previstos.
+  TLS, dominios, puertos, respaldos y separación de entornos siguen por configurar.
+endlegend
+@enduml

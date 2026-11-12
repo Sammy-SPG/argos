@@ -1,0 +1,166 @@
+@startuml
+!pragma layout smetana
+title Argos · 7. Vista general de los ciclos de estado
+caption Ciclos independientes que operan de forma concurrente · propuesta funcional · 25 de octubre de 2026
+
+' Vista conjunta de cinco máquinas de estados, cada una con su propio contexto.
+' No hay una única máquina global ni una transición que desplace al sistema
+' completo entre acceso, recepción, atención, avisos y video.
+' Los vínculos hidden solo ordenan la lámina; no son transiciones UML.
+' Las letras A-D identifican comunicaciones, descritas en la leyenda.
+' Fuentes: docs/RF & RNF.md, backend/prisma/schema.prisma,
+' backend/src/auth/auth.service.ts y docs/uml/04-estados.puml.
+' Acceso y video son modelos conceptuales propuestos, no nuevos enums.
+' Renderizado local: java -Djava.awt.headless=true -jar /ruta/plantuml.jar
+'   -charset UTF-8 -tsvg docs/uml/07-estados-general.puml
+' Sintaxis de referencia: https://plantuml.com/state-diagram
+
+skinparam backgroundColor white
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam ArrowColor #475569
+skinparam stateBackgroundColor #F8FAFC
+skinparam stateBorderColor #64748B
+skinparam stateFontColor #0F172A
+skinparam nodesep 40
+skinparam ranksep 55
+hide empty description
+top to bottom direction
+
+state "1. ACCESO Y SESIÓN\nUna instancia por cliente" as Acceso #EFF6FF {
+  state "Sin sesión" as SinSesion
+  state "Autenticando" as Autenticando
+  state "Sesión vigente" as SesionVigente
+  state "Sesión finalizada\n(cierre, vencimiento o cuenta inactiva)" as SesionFinalizada
+
+  [*] --> SinSesion
+  SinSesion --> Autenticando : iniciarSesion
+  Autenticando --> SinSesion : accesoRechazado\n/ informar error
+  Autenticando --> SesionVigente : credencialesAceptadas\n/ registrar sesión
+  SesionVigente --> SesionFinalizada : cerrarSesion, detectarVencimiento,\n detectarCuentaInactiva\n/ finalizar sesión y emitir (C)
+  SesionFinalizada --> SinSesion : / retirar contexto del cliente
+}
+
+state "2. RECEPCIÓN TÉCNICA\nUna instancia por mensaje recibido" as Recepcion #F0FDFA {
+  state "Pendiente" as RecepcionPendiente
+  state "Procesada" as RecepcionProcesada
+  state "Duplicada" as RecepcionDuplicada
+  state "Error de procesamiento" as RecepcionError
+
+  [*] --> RecepcionPendiente : / conservar mensaje y origen
+  RecepcionPendiente --> RecepcionProcesada : procesar [válida, vinculada y nueva]\n/ crear evento y emitir (A)
+  RecepcionPendiente --> RecepcionDuplicada : procesar [reenvío identificado]\n/ asociar al evento existente
+  RecepcionPendiente --> RecepcionError : procesar [validación o procesamiento falla]\n/ guardar diagnóstico
+  RecepcionProcesada --> [*]
+  RecepcionDuplicada --> [*]
+  RecepcionError --> [*]
+}
+
+state "3. EVENTO OPERATIVO\nUna instancia por EventoSucursal · detalle en 04-estados.puml" as Eventos #EFF6FF {
+  state "Pendiente\nsin encargado" as EventoPendiente
+  state "En atención" as EventoEnAtencion
+  state "Confirmado" as EventoConfirmado {
+    state "Con encargado" as ConfirmadoConEncargado
+    state "Sin encargado" as ConfirmadoSinEncargado
+
+    [*] --> ConfirmadoConEncargado
+    ConfirmadoConEncargado --> ConfirmadoSinEncargado : liberarAtencion, sesionFinalizada (C)\n/ liberar encargado y emitir (B)
+    ConfirmadoSinEncargado --> ConfirmadoConEncargado : tomarAtencion [G]\n/ asignar encargado y emitir (B)
+  }
+  state "Resuelto" as EventoResuelto
+  state "Descartado" as EventoDescartado
+
+  [*] --> EventoPendiente : / registrar estado inicial tras (A); evaluar avisos (B)
+  EventoPendiente --> EventoEnAtencion : tomarAtencion [G]\n/ asignar encargado y emitir (B)
+  EventoEnAtencion --> EventoPendiente : liberarAtencion, sesionFinalizada (C)\n/ liberar encargado y emitir (B)
+  EventoEnAtencion --> EventoConfirmado : confirmar [encargado vigente]\n/ registrar observación e historial
+  EventoEnAtencion --> EventoDescartado : descartar [encargado vigente y motivo]\n/ guardar resolución, finalizar atención\n y emitir cierre (B)
+  ConfirmadoConEncargado --> EventoResuelto : resolver [encargado vigente y resultado]\n/ guardar resolución, finalizar atención\n y emitir cierre (B)
+  EventoResuelto --> [*]
+  EventoDescartado --> [*]
+}
+
+state "4. NOTIFICACIONES\nUna instancia por evento, destinatario y destino de sesión" as Avisos #FFF7ED {
+  state "Pendiente" as AvisoPendiente
+  state "Fallida" as AvisoFallido
+  state "Cancelada" as AvisoCancelado
+  state "Seguimiento de entrega\nSolo las confirmaciones disponibles en el canal" as SeguimientoAviso {
+    state "Enviada\naceptada por el canal" as AvisoEnviado
+    state "Entregada" as AvisoEntregado
+    state "Recibida\nacuse del cliente" as AvisoRecibido
+    state "Abierta" as AvisoAbierto
+
+    [*] --> AvisoEnviado
+    AvisoEnviado --> AvisoEntregado : confirmarEntrega
+    AvisoEntregado --> AvisoRecibido : acuseCliente
+    AvisoEnviado --> AvisoRecibido : acuseCliente directo
+    AvisoRecibido --> AvisoAbierto : abrirAviso / emitir (D)
+    AvisoEntregado --> AvisoAbierto : abrirAviso / emitir (D)
+    AvisoEnviado --> AvisoAbierto : abrirAviso / emitir (D)
+
+    SeguimientoAviso : vencePlazo [sin encargado y política habilitada] / reiterar o escalar
+    SeguimientoAviso : encargadoAsignado (B) / detener reiteración y escalamiento
+    SeguimientoAviso : eventoCerrado (B), destinoRetirado (C) / detener nuevos envíos
+  }
+
+  [*] --> AvisoPendiente : / crear aviso para destinatario válido (B)
+  AvisoPendiente --> SeguimientoAviso : enviar [E]\n/ registrar intento aceptado
+  AvisoPendiente --> AvisoFallido : falloEnvio\n/ registrar intento fallido
+  AvisoFallido --> AvisoPendiente : reintentar [E y política lo permite]\n/ preparar nuevo intento
+  AvisoPendiente --> AvisoCancelado : eventoCerrado (B), destinoRetirado (C)\n/ registrar cancelación
+  AvisoFallido --> AvisoCancelado : retirarDestino, cancelarReintentos\n/ registrar cancelación
+  AvisoCancelado --> [*]
+
+  AvisoPendiente : encargadoAsignado (B) / suspender envíos
+  AvisoPendiente : encargadoLiberado (B) / reevaluar envío según política
+}
+
+state "5. REPRODUCCIÓN DE VIDEO\nUna instancia por reproductor del cliente · diseño propuesto" as Video #F5F3FF {
+  state "Sin reproducción" as SinVideo
+  state "Reproducción solicitada" as VideoSolicitado {
+    state "Conectando" as VideoConectando
+    state "Reproduciendo" as VideoReproduciendo
+    state "Interrumpida / no disponible" as VideoInterrumpido
+
+    [*] --> VideoConectando
+    VideoConectando --> VideoReproduciendo : primerFrameRecibido
+    VideoConectando --> VideoInterrumpido : errorConexion, camaraNoDisponible\n/ informar condición
+    VideoReproduciendo --> VideoInterrumpido : perdidaStream\n/ informar falla
+    VideoInterrumpido --> VideoConectando : reintentar [acceso vigente y cámara disponible]
+    VideoReproduciendo --> VideoConectando : cambiarCamara [autorizada]\n/ cerrar transmisión anterior
+  }
+  state "Reproducción finalizada" as VideoFinalizado
+
+  [*] --> SinVideo
+  SinVideo --> VideoSolicitado : solicitarVideo [sesión, alcance y cámara válidos]\n/ obtener acceso autorizado
+  VideoSolicitado --> VideoFinalizado : cerrarContexto, detectarSesionFinalizada (C)\n/ cerrar reproductor
+  VideoFinalizado --> SinVideo : / liberar recursos
+}
+
+' Distribución de cinco máquinas independientes; no hay flechas visibles entre ellas.
+Acceso -[hidden]right-> Recepcion
+Acceso -[hidden]down-> Eventos
+Recepcion -[hidden]down-> Eventos
+Eventos -[hidden]down-> Avisos
+Eventos -[hidden]down-> Video
+Avisos -[hidden]right-> Video
+
+legend bottom
+  **LECTURA:** cada recuadro es un ciclo independiente; pueden coexistir muchas instancias.
+  Las flechas son transiciones dentro de un ciclo. No indican que todo Argos cambie al mismo estado.
+  **A · Recepción → evento:** solo una señal nueva genera un evento; los reenvíos se vinculan al existente.
+  **B · Evento → avisos:** evaluar destinatarios; suspender reiteración y escalamiento mientras haya encargado.
+  **C · Sesión finalizada:** retirar sus destinos y liberar solo sus atenciones. La recepción sigue operando.
+  **D · Aviso abierto:** navegar al contexto del evento con sesión y autorización; abrir no equivale a tomar atención.
+  **G:** sesión y alcance válidos, evento sin encargado y usuario sin otra atención; comprobación atómica.
+  Los cambios de atención, estado e historial deben persistirse en una misma transacción.
+  **E:** evento abierto sin encargado, destinatario autorizado y sesión/destino vigentes; reevaluar antes de enviar.
+  Confirmado conserva su confirmación al perder encargado. La falla de video no cierra ni descarta el evento.
+  Los acuses de aviso pueden omitir etapas; no se debe retroceder el estado por confirmaciones tardías.
+  Un envío ya aceptado no se retira del dispositivo; su seguimiento conserva el estado y se detienen nuevos envíos.
+  Estados de recepción, evento y aviso basados en Prisma; acceso/video conceptuales. Se omiten detalles de intentos.
+  Integración, acuses, reintentos técnicos y política de escalamiento pendientes de acuerdo o validación.
+  Transición: evento [condición] / efecto. Modelo general propuesto; no acredita implementación ni integración real.
+endlegend
+@enduml

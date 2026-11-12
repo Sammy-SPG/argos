@@ -8,6 +8,8 @@ Monorepositorio para el sistema Argos. El backend ya tiene una plantilla NestJS 
 | [`backend/`](backend/) | API NestJS; esquema y primera migración de Prisma ORM 7 para MySQL/MariaDB. |
 | [`dc09-receiver/`](dc09-receiver/) | Posible receptor de eventos DC-09 en Node.js y TypeScript. |
 
+Los [seis diagramas UML de referencia](docs/uml/README.md) incluyen imágenes SVG, fuentes PlantUML editables y notas sobre el alcance implementado y el diseño previsto.
+
 ## Flujo propuesto
 
 1. Un receptor existente o uno propio recibe el evento y confirma la recepción según el protocolo aplicable.

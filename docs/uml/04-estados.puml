@@ -1,0 +1,54 @@
+@startuml
+!pragma layout smetana
+title Argos · 4. Ciclo de vida de EventoSucursal
+skinparam backgroundColor white
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam stateBackgroundColor #EFF6FF
+skinparam stateBorderColor #2563EB
+skinparam ArrowColor #475569
+hide empty description
+
+state "PENDIENTE\n(estado: pendiente)" as Pendiente
+state "EN_ATENCION\n(estado: enAtencion)" as EnAtencion
+state "CONFIRMADO\n(estado: confirmado)" as Confirmado {
+  state "Con encargado vigente" as ConEncargado
+  state "Sin encargado vigente" as SinEncargado
+  [*] --> ConEncargado
+  ConEncargado --> SinEncargado : liberarAtencion, perderSesion, desactivarCuenta\n/ finalizar atención y registrar historial
+  SinEncargado --> ConEncargado : tomarAtencion [autorizado y disponible]\n/ asignar encargado y detener avisos pendientes
+  SinEncargado --> SinEncargado : vencePlazo [política habilitada]\n/ repetir o escalar aviso
+}
+state "RESUELTO\n(estado: resuelto)" as Resuelto
+state "DESCARTADO\n(estado: descartado)" as Descartado
+
+[*] --> Pendiente : / guardar evento, contexto e historial inicial
+Pendiente --> EnAtencion : tomarAtencion [autorizado y disponible]\n/ crear atención exclusiva y detener avisos pendientes
+Pendiente --> Pendiente : vencePlazo [sin encargado y política habilitada]\n/ repetir o escalar aviso
+EnAtencion --> Pendiente : liberarAtencion, perderSesion, desactivarCuenta\n/ finalizar atención y registrar historial
+EnAtencion --> Confirmado : confirmar [encargado vigente y observación válida]\n/ registrar confirmación e historial
+EnAtencion --> Descartado : descartar [encargado vigente y motivo válido]\n/ guardar resolución y finalizar atención
+ConEncargado --> Resuelto : resolver [encargado vigente y resultado válido]\n/ guardar resolución y finalizar atención
+Resuelto --> [*]
+Descartado --> [*]
+
+note right of Confirmado
+  Los subestados dependen de AtencionEvento.
+  No añaden valores al enum de Prisma.
+  Perder al encargado NO revierte la confirmación.
+end note
+note left of EnAtencion
+  «Autorizado y disponible» significa:
+  sesión vigente, rol y sucursal permitidos,
+  evento sin encargado y usuario sin otra
+  atención vigente; comprobación atómica.
+end note
+legend bottom
+  Precondición de creación: señal válida, vinculada y no duplicada.
+  Transición: evento [condición] / efecto.
+  Las recepciones técnicas duplicadas o con error pertenecen a RecepcionEvento.
+  Los cierres son terminales según los requisitos actuales; no se propone reapertura.
+  El escalamiento está previsto; sus niveles y plazos aún deben acordarse.
+endlegend
+@enduml

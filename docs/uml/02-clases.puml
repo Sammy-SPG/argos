@@ -1,0 +1,175 @@
+@startuml
+!pragma layout smetana
+title Argos · 2. Clases principales del dominio y diseño de avisos
+left to right direction
+skinparam backgroundColor white
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 13
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam ArrowColor #475569
+skinparam classBackgroundColor #EFF6FF
+skinparam classBorderColor #2563EB
+hide empty members
+
+package "Identidad y contexto · entidades existentes" {
+  class Usuario {
+    - id: Int
+    - numeroControl: String
+    - rol: RolUsuario
+    + tieneAtencionVigente(): Boolean
+  }
+  class SesionUsuario {
+    - id: Int
+    - vencimiento: DateTime
+    - finalizada: DateTime?
+    + estaVigente(ahora: DateTime): Boolean
+  }
+  class Sucursal {
+    - id: Int
+    - nombre: String
+    - zonaHoraria: String
+    + estaEnHorario(fecha: DateTime): Boolean
+  }
+  class ZonaParticion {
+    - id: Int
+    - nombre: String
+    - numero: String
+    + seleccionarCamara(): CamaraZona?
+  }
+  class CamaraZona {
+    - id: Int
+    - prioridad: Int
+    - urlStream: String
+    - estado: EstadoCamaraZona
+    + estaOperativa(): Boolean
+  }
+}
+
+package "Eventos · entidades existentes" {
+  class RecepcionEvento {
+    - id: Int
+    - origen: String
+    - contenido: Json
+    - estado: EstadoRecepcionEvento
+    + esDuplicada(): Boolean
+  }
+  class EventoSucursal {
+    - id: Int
+    - estado: EstadoEventoSucursal
+    - tipo: TipoEventoSucursal
+    - anomalia: AnomaliaEventoSucursal
+    - claveDeduplicacion: String
+    + tomarAtencion(u: Usuario, s: SesionUsuario): AtencionEvento
+    + confirmar(atencionId: Int, observacion: String): void
+    + descartar(atencionId: Int, motivo: String): void
+    + resolver(atencionId: Int, resultado: String): void
+  }
+  class AtencionEvento {
+    - id: Int
+    - inicio: DateTime
+    - finalizada: DateTime?
+    - vigente: Boolean?
+    + finalizar(motivo: String): void
+  }
+  class HistorialEvento {
+    - id: Int
+    - accion: AccionHistorialEvento
+    - estadoAnterior: EstadoEventoSucursal?
+    - estado: EstadoEventoSucursal?
+    - fecha: DateTime
+  }
+  class ResolucionEvento {
+    - id: Int
+    - accion: AccionResolucionEvento
+    - comentarios: String
+    - creado: DateTime
+  }
+  enum EstadoEventoSucursal {
+    pendiente
+    enAtencion
+    confirmado
+    resuelto
+    descartado
+  }
+}
+
+package "Notificaciones · entidades existentes" {
+  class NotificacionEvento {
+    - id: Int
+    - estado: EstadoNotificacionEvento
+    - creado: DateTime
+    + registrarIntento(): IntentoNotificacion
+  }
+  class IntentoNotificacion {
+    - id: Int
+    - numero: Int
+    - estado: EstadoIntentoNotificacion
+    - inicio: DateTime
+    + finalizar(exito: Boolean): void
+  }
+}
+
+package "Servicios y canales · propuesta de diseño" #FFF7ED {
+  class ServicioNotificaciones <<propuesto>> {
+    + enviar(aviso: NotificacionEvento): ResultadoEnvio
+    + detenerPendientes(eventoId: Int): void
+  }
+  abstract class CanalNotificacion <<propuesto>> {
+    # nombre: String
+    {abstract} + enviar(aviso: NotificacionEvento): ResultadoEnvio
+  }
+  class CanalAndroidFCM <<propuesto>> {
+    + enviar(aviso: NotificacionEvento): ResultadoEnvio
+  }
+  class CanalWindows <<propuesto>> {
+    + enviar(aviso: NotificacionEvento): ResultadoEnvio
+  }
+}
+
+Sucursal "0..1" o-- "0..*" Usuario : asignación actual
+Usuario "1" -- "0..*" SesionUsuario
+Sucursal "1" -- "0..*" ZonaParticion
+ZonaParticion "1" -- "0..*" CamaraZona
+Sucursal "1" -- "0..*" EventoSucursal
+ZonaParticion "1" -- "0..*" EventoSucursal
+EventoSucursal "0..1" -- "0..*" RecepcionEvento
+EventoSucursal "1" -- "0..*" AtencionEvento
+Usuario "1" -- "0..*" AtencionEvento
+SesionUsuario "1" -- "0..*" AtencionEvento
+EventoSucursal "1" *-- "0..*" HistorialEvento
+EventoSucursal "1" *-- "0..1" ResolucionEvento
+Usuario "0..1" -- "0..*" HistorialEvento : autor
+Usuario "1" -- "0..*" ResolucionEvento : autor
+EventoSucursal "1" -- "0..*" NotificacionEvento
+Usuario "1" -- "0..*" NotificacionEvento : destinatario
+NotificacionEvento "1" *-- "0..*" IntentoNotificacion
+EventoSucursal ..> EstadoEventoSucursal
+ServicioNotificaciones ..> NotificacionEvento
+ServicioNotificaciones --> CanalNotificacion : utiliza
+CanalNotificacion <|-- CanalAndroidFCM
+CanalNotificacion <|-- CanalWindows
+
+note bottom of AtencionEvento
+  Restricciones adicionales a la multiplicidad histórica:
+  máximo una atención vigente por evento y por usuario.
+  La sesión pertenece al usuario que toma la atención.
+  Finalizar atención y cambiar estado debe ser atómico.
+end note
+note bottom of Sucursal
+  La agregación resume UsuarioSucursal; los usuarios
+  pueden existir sin asignación y ser reasignados.
+  La zona del evento debe pertenecer a su sucursal.
+  Particiones, sensores, horarios y contactos se omiten
+  de esta vista general.
+end note
+legend bottom
+  - privado  |  # protegido  |  + público  |  ? opcional
+  Línea: asociación  |  rombo blanco: agregación  |  rombo negro: composición
+  Triángulo vacío: herencia  |  flecha discontinua: dependencia
+  Entidades y atributos seleccionados de Prisma; todos los métodos son propuestas de dominio.
+  Las composiciones expresan pertenencia lógica; no prescriben borrado en cascada.
+  Otros enumerados conservan su nombre en el esquema. ResultadoEnvio es un contrato propuesto.
+endlegend
+@enduml

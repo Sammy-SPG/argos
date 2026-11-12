@@ -1,0 +1,104 @@
+@startuml
+!pragma layout smetana
+title Argos · 1. Casos de uso generales
+left to right direction
+skinparam backgroundColor white
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam ArrowColor #475569
+skinparam usecaseBackgroundColor #EFF6FF
+skinparam usecaseBorderColor #2563EB
+
+actor "Usuario registrado" as Usuario <<abstracto>>
+actor Administrador as Admin
+actor Gerente
+actor Operador
+actor "Emisor o receptor\nautorizado" as Emisor
+actor "Proveedor de avisos\n(p. ej., FCM)" as Proveedor
+actor "Cámara / servicio\nde transmisión" as Camara
+
+Usuario <|-- Admin
+Usuario <|-- Gerente
+Usuario <|-- Operador
+
+rectangle "Sistema Argos (clientes y servidor)" {
+  package "Acceso" {
+    usecase "Iniciar sesión" as Login
+    usecase "Cerrar sesión" as Logout
+  }
+  package "Administración" {
+    usecase "Administrar sucursales\ny gerentes" as Sucursales
+    usecase "Administrar operadores" as Operadores
+    usecase "Configurar operación\ny monitoreo" as Configurar
+    usecase "Consultar historial" as Historial
+    usecase "Configurar política\nde avisos y escalamiento" as Politica
+  }
+  package "Monitoreo y atención" {
+    usecase "Recibir y registrar señal" as Recibir
+    usecase "Validar y normalizar" as Normalizar
+    usecase "Vincular, clasificar\ny controlar duplicados" as Clasificar
+    usecase "Consultar evento\ny contexto" as Contexto
+    usecase "Tomar atención\nexclusiva" as Tomar
+    usecase "Confirmar incidente" as Confirmar
+    usecase "Descartar evento" as Descartar
+    usecase "Resolver incidente" as Resolver
+    usecase "Liberar atención" as Liberar
+    usecase "Reproducir video" as Video
+  }
+  package "Avisos" {
+    usecase "Gestionar avisos\nde evento" as Avisar
+    usecase "Escalar aviso" as Escalar
+  }
+}
+
+Usuario -- Login
+Usuario -- Logout
+Usuario -- Contexto
+Usuario -- Tomar
+Usuario -- Confirmar
+Usuario -- Descartar
+Usuario -- Resolver
+Usuario -- Liberar
+Admin -- Sucursales
+Admin -- Operadores
+Gerente -- Operadores
+Admin -- Configurar
+Gerente -- Configurar
+Admin -- Historial
+Gerente -- Historial
+Admin -- Politica
+Gerente -- Politica
+Emisor -- Recibir
+Proveedor -- Avisar
+Camara -- Video
+
+Recibir ..> Normalizar : <<include>>
+Recibir ..> Clasificar : <<include>>
+Video ..> Contexto : <<extend>>\n[se solicita video y hay cámara]
+Escalar ..> Avisar : <<extend>>\n[vence plazo y no hay encargado]
+
+note bottom of Tomar
+  Sesión vigente y acción autorizada.
+  Un encargado por evento y una atención
+  vigente por usuario. Confirmar, descartar
+  y resolver exigen ser el encargado.
+end note
+note bottom of Configurar
+  Horarios, contactos, particiones, zonas,
+  sensores y cámaras. Gerente: su sucursal.
+  Administrador: alcance global.
+end note
+note bottom of Avisar
+  Se activa para eventos notificables.
+  La jerarquía y los plazos de escalamiento
+  están pendientes de acuerdo.
+end note
+legend bottom
+  Generalización de actores: hereda las funciones compartidas.
+  «include»: comportamiento requerido por el caso base.
+  «extend»: comportamiento condicional; la flecha apunta al caso base.
+  Vista de requisitos y diseño; no afirma implementación completa.
+endlegend
+@enduml
