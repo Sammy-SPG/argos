@@ -4,7 +4,7 @@
 
 Identificar al usuario mediante su número de control y contraseña, registrar su sesión y comprobar que esa sesión siga vigente. El servicio puede utilizarse desde otros componentes mediante `AuthService.validarSesion(token)`.
 
-La [matriz de autorización propuesta](../autorizacion/README.md) define por separado qué puede hacer cada rol, sus alcances y las restricciones de los recursos. Su aplicación mediante guards y permisos individuales todavía está pendiente; este módulo proporciona la identidad y el contexto de sesión que utilizará esa autorización.
+La [matriz de autorización](../autorizacion/README.md) ya tiene una [configuración TypeScript por rol](../autorizacion/matriz-permisos.ts), con propuestas pendientes separadas. Los guards globales ya aplican la autenticación y los permisos sembrados según esa matriz. Este módulo proporciona la identidad y el contexto de sesión de cada petición, consultados en MySQL.
 
 ## Alcance y responsabilidades
 
@@ -19,6 +19,12 @@ El módulo es responsable de:
 - Construir un contexto tipado con los datos actuales de la sesión, usuario, rol y sucursal.
 - Cerrar la sesión, retirar sus destinos de avisos y liberar su atención activa.
 - Exponer la validación de sesión para otros componentes de la aplicación.
+
+### Registro interno de dispositivos: diseño acordado
+
+El registro o renovación del destino de avisos pertenecerá a `auth/`, sin carpeta de negocio ni controlador CRUD de `dispositivo_sesion`, y no requerirá un permiso administrable adicional. La aplicación debe aportar su token o dato de destino; autenticación lo vinculará al usuario y sesión correctos, manteniendo un solo destino activo.
+
+El login actual todavía recibe únicamente `numeroControl` y `contrasena`; la incorporación de esos datos de dispositivo sigue pendiente. Si el destino está disponible al iniciar sesión se podrá registrar en ese flujo; si llega o cambia después, se comunicará mediante una operación autenticada de la sesión dentro de este mismo módulo. El cierre existente ya desactiva los dispositivos asociados, conservando los registros históricos.
 
 ## Archivos
 
@@ -83,7 +89,7 @@ Ambos campos deben ser texto. El número de control admite hasta 191 caracteres 
 
 Responde `200` con `accessToken`, `tokenType: "Bearer"` y `sesion`. El contexto de sesión incluye `sesionId`, `usuarioId`, `numeroControl`, `nombre`, `apellido`, `rol`, `sucursalId` y `vencimiento` en formato ISO. Una cuenta sin sucursal conserva `sucursalId: null`.
 
-Una cuenta desconocida, una contraseña incorrecta, una cuenta inhabilitada o un bloqueo vigente reciben `401` con el mismo mensaje: `No fue posible iniciar sesión.` Los datos de entrada inválidos reciben `400`.
+Una cuenta desconocida, una contraseña incorrecta, una cuenta inhabilitada o un bloqueo vigente reciben `401` con el mismo mensaje: `No fue posible iniciar sesión.` Los datos de entrada inválidos reciben `400`. Si las credenciales son válidas pero existe otra sesión activa, responde `409 Conflict` y conserva la sesión anterior sin interrumpir sus atenciones.
 
 ### GET /auth/me
 
@@ -135,7 +141,17 @@ La sesión y cada evento se bloquean durante el cierre para evitar liberaciones 
 
 El cierre explícito se atribuye al usuario que lo solicita. El cierre por vencimiento o cuenta inhabilitada se registra como automático, con usuario nulo en el historial.
 
-No hay un proceso periódico de vencimiento en esta implementación. La limpieza de una sesión vencida se realiza cuando se presenta su token a la validación; el paso del tiempo por sí solo no modifica los destinos o atenciones de clientes desconectados.
+No hay un proceso periódico de vencimiento en esta implementación. La limpieza de una sesión vencida se realiza cuando se presenta su token a la validación o cuando un nuevo login válido encuentra esa sesión vencida; el paso del tiempo por sí solo no modifica los destinos o atenciones de clientes desconectados.
+
+## Sesión única y permisos cacheados
+
+El inicio de sesión bloquea la fila `usuario` con `SELECT ... FOR UPDATE` y aislamiento `ReadCommitted`. Después de validar credenciales finaliza las sesiones vencidas y rechaza con `409` si queda alguna vigente. La comprobación y creación se realizan en la misma transacción; dos instancias de la API comparten ese bloqueo SQL. Se conserva el historial de sesiones. No se ha añadido una migración ni una unicidad adicional sobre sesiones activas.
+
+Después de confirmar la sesión, `PermisosService` precarga los permisos en Redis. Si esa precarga falla, se registra un aviso sin datos privados y se entrega el token ya confirmado. Las peticiones protegidas pueden recargar las asignaciones desde MySQL. Una cuenta sin permisos sembrados puede usar me y logout, pero no las rutas con permisos.
+
+`AuthGuard` extrae el Bearer token y llama una vez a `validarSesion()` por petición. El controlador reutiliza ese contexto para me y `cerrarSesionValidada()` para logout. Login usa `@Publica()` y me/logout `@SoloSesion()`. `PermisosGuard` se ejecuta después para rutas con `@RequierePermiso(...)`.
+
+Solo se cachean permisos. La sesión, el estado de la cuenta, el rol y la sucursal se consultan en MySQL en cada petición. Cerrar una sesión invalida inmediatamente su uso posterior aunque el perfil de permisos siga en caché. Esa caché es por usuario y puede reutilizarse en un login posterior mientras siga vigente. Los futuros cambios de rol, permisos o asignación deberán sincronizar las filas e invalidar el perfil tras confirmar la escritura.
 
 ## Comprobación
 
@@ -144,10 +160,10 @@ Desde `backend/`:
 ```bash
 npm run typecheck
 npm run build
-npm test -- src/auth/auth.service.spec.ts
+npm run lint
 ```
 
-Las pruebas utilizan un cliente de base de datos simulado, bcrypt y JWT reales. Comprueban credenciales, bloqueos, vencimiento, revocación, contenido de las respuestas, cierre de destinos y liberación de atenciones. No sustituyen una prueba de integración con MySQL o MariaDB ni modifican la base de datos local.
+La comprobación manual se realiza con login, me, logout y las [rutas de diagnóstico de permisos](../test/user/README.md). Las suites automatizadas son locales y no se versionan; se conservan las configuraciones de Vitest para ejecutarlas cuando estén disponibles. El registro de la validación realizada durante la implementación está en el [README del backend](../../README.md).
 
 ## Referencias
 

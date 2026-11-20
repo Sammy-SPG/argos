@@ -1,8 +1,8 @@
 # Redis del backend de Argos
 
-Redis queda configurado como almacenamiento compartido de caché para el backend. El primer consumidor previsto es la autorización: conservar temporalmente los permisos de cada usuario y eliminarlos de caché cuando cambien.
+Redis queda configurado como almacenamiento compartido de caché para el backend. Su primer consumidor es la autorización: conservar temporalmente los permisos de cada usuario y eliminarlos de caché cuando cambien.
 
-Esta configuración incorpora la conexión, operaciones JSON con TTL, un servicio local en Docker Compose y una comprobación de integración. La [matriz de roles y permisos](../autorizacion/README.md) está documentada como propuesta revisable; el servicio de permisos y el decorador `@RequierePermiso(...)` todavía no están implementados. Actualmente ninguna solicitud consulta permisos mediante Redis.
+Esta configuración incorpora la conexión, operaciones JSON con TTL, un servicio local en Docker Compose y una comprobación de integración. La [autorización](../autorizacion/README.md) ya incluye la matriz TypeScript, `PermisosService`, guards y `@RequierePermiso(...)`. Login precarga los permisos y las rutas protegidas consultan su caché, con MySQL como fuente.
 
 ## Arquitectura y acceso privado en producción
 
@@ -31,7 +31,6 @@ Por tanto, sí podemos conservar `127.0.0.1` en producción si el backend se eje
 | `redis.module.ts` | Registrar y exportar el servicio; carga `.env` y comparte una instancia por aplicación NestJS. |
 | `redis.service.ts` | Abrir y cerrar la conexión, recuperar desconexiones y ejecutar las operaciones de caché. |
 | `../../scripts/comprobar-redis.ts` | Comprobar el módulo contra Redis sin cargar Prisma ni autenticación. |
-| `redis.config.spec.ts` | Pruebas de configuración inválida, credenciales, aislamiento por entorno y vencimientos. |
 
 Se instaló el cliente oficial `redis` mediante `npm install redis`. La versión instalada inicialmente es 6.3.1; `package-lock.json` registra la versión resuelta y sus dependencias. Se utiliza directamente desde un servicio NestJS para controlar las claves, el vencimiento y la invalidación explícita.
 
@@ -168,7 +167,7 @@ Cada opción tiene un propósito:
 | `--maxmemory 128mb` | Establece el umbral de memoria administrada por Redis a partir del que aplica la política de expulsión. No es un límite total de memoria del contenedor. |
 | `--maxmemory-policy allkeys-lru` | Al necesitar liberar memoria, permite descartar claves y prioriza las utilizadas menos recientemente. |
 
-Elegimos estas opciones porque los permisos almacenados serán una copia temporal de MySQL. Una clave puede desaparecer antes de cumplir su TTL si Redis necesita liberar memoria; el futuro servicio de permisos deberá poder volver a cargarla. Más información: [persistencia de Redis](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/) y [expulsión de claves](https://redis.io/docs/latest/develop/reference/eviction/).
+Elegimos estas opciones porque los permisos almacenados son una copia temporal de MySQL. Una clave puede desaparecer antes de cumplir su TTL si Redis necesita liberar memoria; el servicio de permisos vuelve a cargarla desde MySQL. Más información: [persistencia de Redis](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/) y [expulsión de claves](https://redis.io/docs/latest/develop/reference/eviction/).
 
 ### `tmpfs`: directorio temporal
 
@@ -222,7 +221,7 @@ Las operaciones disponibles son:
 | `eliminar(clave)` | Elimina únicamente la clave indicada y permite invalidar una entrada. |
 | `obtenerTtl(clave)` | Devuelve los segundos restantes; Redis devuelve `-2` si la clave no existe y `-1` si no tiene vencimiento. |
 
-Ejemplo de uso previsto para permisos, una vez implementado ese módulo:
+Ejemplo de operaciones JSON generales (el servicio de permisos utiliza además revisiones para coordinar la invalidación):
 
 ```ts
 const clave = `permisos:usuario:${usuarioId}`;
@@ -243,14 +242,25 @@ Una lista vacía `[]` se conserva como valor válido; es diferente de una clave 
 - Los logs de conexión no incluyen la URL ni la contraseña.
 - Al cerrar la aplicación se cierra la conexión. Si está desconectada y reintentando, se destruye el cliente para detener los reintentos.
 
-La hora de TTL limita la antigüedad de una entrada; no sustituye la invalidación. El futuro servicio de permisos deberá eliminar la clave del usuario al confirmar cambios de permisos, rol o asignaciones. También deberá definir cómo resolver lecturas y cambios concurrentes y cómo proceder si Redis falla, conservando MySQL como fuente y sin conceder acceso por un error de caché.
+La hora de TTL limita la antigüedad de una entrada; no sustituye la invalidación. `PermisosService.invalidarUsuario(id)` cambia la revisión y elimina `permisos:usuario:<id>` después del commit SQL. La semilla ya utiliza ese método; los futuros cambios de rol o asignación también deberán hacerlo. Si Redis falla durante la consulta, se leen los permisos en MySQL. Si falla la invalidación de la semilla, esta termina con error y debe repetirse; las filas SQL ya confirmadas se conservan.
+
+### Revisiones para lecturas concurrentes
+
+| Método | Comportamiento |
+| --- | --- |
+| `obtenerRevision(claveRevision)` | Obtiene un UUID de revisión o crea uno con TTL si falta. |
+| `guardarJsonSiRevision(clave, valor, claveRevision, revision)` | Guarda JSON con TTL únicamente si la revisión sigue igual; devuelve si se publicó. |
+| `invalidarConRevision(clave, claveRevision)` | Cambia la revisión a otro UUID y elimina el perfil atómicamente. |
+
+Cada método ejecuta un pequeño script Lua en el servidor Redis. Así la comparación y la escritura no se intercalan con una invalidación. Una consulta SQL iniciada con una revisión anterior no puede volver a publicar sus datos después del cambio. Las revisiones también pueden vencer o ser expulsadas; los UUID impiden confundir una revisión nueva con otra anterior. No se almacenan claves permanentes ni se utiliza `FLUSHDB`.
+
+El perfil incluye usuario, rol, versión de matriz y permisos. El consumidor valida el contenido antes de usarlo. Las claves cortas son `permisos:usuario:<id>` y `permisos:revision:<id>`, ambas con el prefijo configurado y el TTL de permisos. El servicio está preparado para el Redis único actual; estos scripts con varias claves requieren adaptarse si en el futuro se utiliza Redis Cluster.
 
 La validación actual de sesión continúa consultando su estado en MySQL. Esta configuración no guarda sesiones ni decisiones de acceso a recursos en Redis.
 
 ## Comprobaciones
 
 ```bash
-npm test
 npm run typecheck
 npm run lint
 npm run build
@@ -259,7 +269,7 @@ npm run redis:check
 
 `redis:check` abre el módulo real de NestJS y comprueba `PING`, lectura y escritura JSON, TTL positivo, eliminación y expiración de una entrada de un segundo. Utiliza una clave aleatoria `diagnostico:<uuid>`, la elimina al terminar y cierra el contexto. No necesita MySQL ni las variables JWT, y no modifica permisos de usuarios.
 
-Las pruebas de configuración pueden ejecutarse sin un servidor Redis. La comprobación de integración sí necesita que Redis esté iniciado y sus variables estén configuradas.
+La comprobación `redis:check` necesita que Redis esté iniciado y sus variables estén configuradas. Las suites automatizadas se mantienen solo de forma local y sus archivos están excluidos mediante `.gitignore`.
 
 Validación realizada durante esta configuración:
 
@@ -275,7 +285,7 @@ Validación realizada durante esta configuración:
 - **El puerto 6379 está ocupado:** utiliza otro `REDIS_LOCAL_PORT` y actualiza `REDIS_URL` con ese mismo puerto.
 - **Falla la autenticación:** revisa que cliente y servidor usen la misma contraseña. Si cambiaste la del contenedor, ejecuta nuevamente `npm run redis:up` y reinicia el backend para cargar el nuevo entorno.
 - **Redis pierde claves:** el servicio local no tiene persistencia; también pueden vencer por TTL o descartarse por el límite de memoria.
-- **Un cambio directo en MySQL no se refleja en caché:** una vez implementada la autorización, los cambios deberán pasar por el servicio que invalide las entradas o acompañarse de invalidación explícita.
+- **Un cambio directo en MySQL no se refleja en caché:** los cambios deben pasar por el servicio que invalide las entradas o acompañarse de invalidación explícita.
 
 ## Fuentes
 
