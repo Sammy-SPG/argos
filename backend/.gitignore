@@ -9,3 +9,11 @@ dist/
 
 # Prisma Client se regenera a partir del esquema
 /generated/prisma/
+
+# Pruebas automatizadas locales; src/test contiene rutas de diagnóstico versionadas.
+/test/
+/tests/
+*.spec.*
+*.test.*
+*.e2e-spec.*
+/coverage/

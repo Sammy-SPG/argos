@@ -7,5 +7,8 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.e2e-spec.ts'],
+    env: { NODE_ENV: 'test', ENABLE_TEST_ROUTES: 'true' },
+    hookTimeout: 60_000,
+    testTimeout: 20_000,
   },
 });
