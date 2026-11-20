@@ -3,9 +3,12 @@ import { Module } from '@nestjs/common';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
 import { AuthController } from '@src/auth/auth.controller';
 import { AuthService } from '@src/auth/auth.service';
+import { AuthGuard } from '@src/auth/guards/auth.guard';
+import { AutorizacionModule } from '@src/autorizacion/autorizacion.module';
 
 @Module({
   imports: [
+    AutorizacionModule,
     JwtModule.registerAsync({
       // La configuración se valida al iniciar y no utiliza un secreto por defecto.
       useFactory: (): JwtModuleOptions => {
@@ -37,8 +40,8 @@ import { AuthService } from '@src/auth/auth.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService],
+  providers: [AuthService, AuthGuard],
   // El servicio permite validar sesiones desde otros componentes de la aplicación.
-  exports: [AuthService],
+  exports: [AuthService, AuthGuard],
 })
 export class AuthModule {}

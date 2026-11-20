@@ -1,8 +1,16 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
 import db from '@backend/libs/db';
+import type { Prisma } from '@backend/generated/prisma/client';
+import { PermisosService } from '@src/autorizacion/permisos.service';
 import {
   AccionHistorialEvento,
   EstadoEventoSucursal,
@@ -25,7 +33,12 @@ const duracionBloqueo = 10 * 60 * 1000;
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly jwtService: JwtService) {}
+  private readonly logger = new Logger(AuthService.name);
+
+  constructor(
+    @Inject(JwtService) private readonly jwtService: JwtService,
+    @Inject(PermisosService) private readonly permisosService: PermisosService,
+  ) { }
 
   /** Comprueba las credenciales y registra cada resultado de acceso de forma atómica. */
   async iniciarSesion(datos: IniciarSesionDto): Promise<RespuestaInicioSesion> {
@@ -48,7 +61,7 @@ export class AuthService {
       async (tx) => {
         // La fila bloqueada serializa los accesos simultáneos a esta misma cuenta.
         await tx.$queryRaw`SELECT id FROM usuario WHERE id = ${usuarioInicial.id} FOR UPDATE`;
-        
+
         const usuario = await tx.usuario.findUnique({
           where: { id: usuarioInicial.id },
           include: { sucursal: true },
@@ -73,14 +86,20 @@ export class AuthService {
           where: { usuarioId: usuario.id, finalizacionEfectiva: null },
         });
 
-        let bloqueoVigente = bloqueos.some((bloqueo) => bloqueo.vencimientoPrevisto > ahora);
-        let bloqueosFinalizados = bloqueos.filter((bloqueo) => bloqueo.vencimientoPrevisto <= ahora);
+        const bloqueoVigente = bloqueos.some(
+          (bloqueo) => bloqueo.vencimientoPrevisto > ahora,
+        );
+        const bloqueosFinalizados = bloqueos.filter(
+          (bloqueo) => bloqueo.vencimientoPrevisto <= ahora,
+        );
 
-        let bloqueoFinalizado = bloqueosFinalizados.length > 0;
+        const bloqueoFinalizado = bloqueosFinalizados.length > 0;
 
         if (bloqueoFinalizado) {
           await tx.bloqueoUsuario.updateMany({
-            where: { id: { in: bloqueosFinalizados.map((bloqueo) => bloqueo.id) } },
+            where: {
+              id: { in: bloqueosFinalizados.map((bloqueo) => bloqueo.id) },
+            },
             data: {
               finalizacionEfectiva: ahora,
               formaFinalizacion: FormaFinalizacionBloqueo.automatica,
@@ -122,6 +141,28 @@ export class AuthService {
           return null;
         }
 
+        // El bloqueo de usuario impide que dos inicios creen sesiones simultáneamente.
+        const sesiones = await tx.sesionUsuario.findMany({
+          where: { usuarioId: usuario.id, finalizada: null },
+          orderBy: { id: 'asc' },
+        });
+
+        for (const sesion of sesiones) {
+          if (sesion.vencimiento <= ahora) {
+            await this.finalizarSesionEnTransaccion(
+              tx,
+              sesion.id,
+              'Sesión vencida.',
+              null,
+            );
+          }
+        }
+
+        if (sesiones.some((sesion) => sesion.vencimiento > ahora)) {
+          // Se confirma cualquier limpieza anterior sin alterar la sesión aún vigente.
+          return { sesionActiva: true as const };
+        }
+
         const accessToken = await this.jwtService.signAsync({
           sub: String(usuario.id),
           jti: randomUUID(),
@@ -138,10 +179,12 @@ export class AuthService {
           },
         });
 
-        await tx.usuario.update({
-          where: { id: usuario.id },
-          data: { intentosFallidos: 0, actualizado: ahora },
-        });
+        if (usuario.intentosFallidos > 0) {
+          await tx.usuario.update({
+            where: { id: usuario.id },
+            data: { intentosFallidos: 0, actualizado: ahora },
+          });
+        }
 
         return {
           accessToken,
@@ -156,6 +199,20 @@ export class AuthService {
       throw new UnauthorizedException('No fue posible iniciar sesión.');
     }
 
+    if ('sesionActiva' in respuesta) {
+      throw new ConflictException(
+        'La cuenta ya tiene una sesión activa. Cierre esa sesión antes de iniciar otra.',
+      );
+    }
+
+    try {
+      await this.permisosService.obtenerPermisos(respuesta.sesion);
+    } catch {
+      // La sesión ya está confirmada: un fallo al precargar no debe ocultar su token.
+      this.logger.warn(
+        'No fue posible precargar los permisos de la nueva sesión.',
+      );
+    }
     return respuesta;
   }
 
@@ -197,6 +254,11 @@ export class AuthService {
   /** Cierra la sesión que presenta el cliente y registra los efectos del cierre. */
   async cerrarSesion(token: string): Promise<void> {
     const sesion = await this.validarSesion(token);
+    await this.cerrarSesionValidada(sesion);
+  }
+
+  /** Reutiliza el contexto que el guard acaba de validar para evitar otra lectura SQL. */
+  async cerrarSesionValidada(sesion: SesionAutenticada): Promise<void> {
     await this.finalizarSesion(
       sesion.sesionId,
       'Cierre de sesión solicitado.',
@@ -281,96 +343,104 @@ export class AuthService {
     actorId: number | null,
   ): Promise<void> {
     await db.$transaction(
-      async (tx) => {
-        // Dos solicitudes de cierre no deben liberar ni registrar dos veces una atención.
-        await tx.$queryRaw`SELECT id FROM sesion_usuario WHERE id = ${sesionId} FOR UPDATE`;
-
-        const sesion = await tx.sesionUsuario.findUnique({
-          where: { id: sesionId },
-        });
-
-        if (!sesion || sesion.finalizada) {
-          return;
-        }
-
-        const ahora = new Date();
-        const atenciones = await tx.atencionEvento.findMany({
-          where: { sesionUsuarioId: sesionId, vigente: true },
-          orderBy: { eventoSucursalId: 'asc' },
-        });
-
-        // Se liberan las atenciones vigentes y se registra el historial de cada evento.
-        for (const atencion of atenciones) {
-          // El evento se bloquea antes de modificar su responsable y su estado.
-          await tx.$queryRaw`SELECT id FROM evento_sucursal WHERE id = ${atencion.eventoSucursalId} FOR UPDATE`;
-
-          const evento = await tx.eventoSucursal.findUniqueOrThrow({
-            where: { id: atencion.eventoSucursalId },
-          });
-
-          const liberacion = await tx.atencionEvento.updateMany({
-            where: {
-              id: atencion.id,
-              sesionUsuarioId: sesionId,
-              vigente: true,
-            },
-            data: {
-              vigente: null,
-              finalizada: ahora,
-              formaFinalizacion: FormaFinalizacionAtencion.abandonoSesion,
-              motivo,
-            },
-          });
-
-          if (liberacion.count === 0) {
-            continue;
-          }
-
-          // Un incidente confirmado conserva su confirmación cuando pierde al encargado.
-          let estado = evento.estado;
-
-          if (estado === EstadoEventoSucursal.enAtencion) {
-            estado = EstadoEventoSucursal.pendiente;
-            await tx.eventoSucursal.update({
-              where: { id: evento.id },
-              data: { estado, actualizado: ahora },
-            });
-          }
-
-          await tx.historialEvento.create({
-            data: {
-              eventoSucursalId: evento.id,
-              atencionEventoId: atencion.id,
-              usuarioId: actorId,
-              accion: AccionHistorialEvento.atencionAbandonada,
-              estadoAnterior: evento.estado,
-              estado,
-              observacion: motivo,
-              fecha: ahora,
-            },
-          });
-        }
-
-        await tx.dispositivoSesionUsuario.updateMany({
-          where: { sesionUsuarioId: sesionId, desactivado: null },
-          data: { desactivado: ahora },
-        });
-
-        await tx.notificacionEvento.updateMany({
-          where: {
-            dispositivoSesionUsuario: { sesionUsuarioId: sesionId },
-            estado: EstadoNotificacionEvento.pendiente,
-          },
-          data: { estado: EstadoNotificacionEvento.cancelada },
-        });
-
-        await tx.sesionUsuario.update({
-          where: { id: sesionId },
-          data: { finalizada: ahora, motivoFinalizacion: motivo },
-        });
-      },
+      (tx) => this.finalizarSesionEnTransaccion(tx, sesionId, motivo, actorId),
       // Cada lectura observa el estado confirmado después de adquirir los bloqueos SQL.
       { isolationLevel: 'ReadCommitted' },
     );
+  }
+
+  /** Comparte la limpieza entre el cierre explícito y el reemplazo de sesiones vencidas. */
+  private async finalizarSesionEnTransaccion(
+    tx: Prisma.TransactionClient,
+    sesionId: number,
+    motivo: string,
+    actorId: number | null,
+  ): Promise<void> {
+    // Dos solicitudes de cierre no deben liberar ni registrar dos veces una atención.
+    await tx.$queryRaw`SELECT id FROM sesion_usuario WHERE id = ${sesionId} FOR UPDATE`;
+
+    const sesion = await tx.sesionUsuario.findUnique({
+      where: { id: sesionId },
+    });
+
+    if (!sesion || sesion.finalizada) {
+      return;
+    }
+
+    const ahora = new Date();
+    const atenciones = await tx.atencionEvento.findMany({
+      where: { sesionUsuarioId: sesionId, vigente: true },
+      orderBy: { eventoSucursalId: 'asc' },
+    });
+
+    // Se liberan las atenciones vigentes y se registra el historial de cada evento.
+    for (const atencion of atenciones) {
+      // El evento se bloquea antes de modificar su responsable y su estado.
+      await tx.$queryRaw`SELECT id FROM evento_sucursal WHERE id = ${atencion.eventoSucursalId} FOR UPDATE`;
+
+      const evento = await tx.eventoSucursal.findUniqueOrThrow({
+        where: { id: atencion.eventoSucursalId },
+      });
+
+      const liberacion = await tx.atencionEvento.updateMany({
+        where: {
+          id: atencion.id,
+          sesionUsuarioId: sesionId,
+          vigente: true,
+        },
+        data: {
+          vigente: null,
+          finalizada: ahora,
+          formaFinalizacion: FormaFinalizacionAtencion.abandonoSesion,
+          motivo,
+        },
+      });
+
+      if (liberacion.count === 0) {
+        continue;
+      }
+
+      // Un incidente confirmado conserva su confirmación cuando pierde al encargado.
+      let estado = evento.estado;
+
+      if (estado === EstadoEventoSucursal.enAtencion) {
+        estado = EstadoEventoSucursal.pendiente;
+        await tx.eventoSucursal.update({
+          where: { id: evento.id },
+          data: { estado, actualizado: ahora },
+        });
+      }
+
+      await tx.historialEvento.create({
+        data: {
+          eventoSucursalId: evento.id,
+          atencionEventoId: atencion.id,
+          usuarioId: actorId,
+          accion: AccionHistorialEvento.atencionAbandonada,
+          estadoAnterior: evento.estado,
+          estado,
+          observacion: motivo,
+          fecha: ahora,
+        },
+      });
+    }
+
+    await tx.dispositivoSesionUsuario.updateMany({
+      where: { sesionUsuarioId: sesionId, desactivado: null },
+      data: { desactivado: ahora },
+    });
+
+    await tx.notificacionEvento.updateMany({
+      where: {
+        dispositivoSesionUsuario: { sesionUsuarioId: sesionId },
+        estado: EstadoNotificacionEvento.pendiente,
+      },
+      data: { estado: EstadoNotificacionEvento.cancelada },
+    });
+
+    await tx.sesionUsuario.update({
+      where: { id: sesionId },
+      data: { finalizada: ahora, motivoFinalizacion: motivo },
+    });
   }
 }

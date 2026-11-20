@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   Inject,
   Injectable,
@@ -182,7 +183,7 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
 
   /**
    * DEL elimina la entrada de caché; no modifica el dato original en MySQL.
-   * Es la operación que utilizará permisos para invalidar la caché de un usuario.
+   * Permite invalidar entradas simples; los perfiles de permisos utilizan invalidarConRevision().
    * Si la clave ya no existe, Redis permite repetir la eliminación sin error.
    */
   async eliminar(clave: string): Promise<void> {
@@ -195,6 +196,75 @@ export class RedisService implements OnModuleInit, OnApplicationShutdown {
    */
   async obtenerTtl(clave: string): Promise<number> {
     return this.cliente.ttl(this.claveCompleta(clave));
+  }
+
+  /** Crea una revisión temporal si no existe y devuelve su identificador actual. */
+  async obtenerRevision(clave: string): Promise<string> {
+    const resultado = await this.cliente.eval(
+      `
+      local revision = redis.call('GET', KEYS[1])
+      if revision then return revision end
+      redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+      return ARGV[1]
+    `,
+      {
+        keys: [this.claveCompleta(clave)],
+        arguments: [randomUUID(), String(this.configuracion.ttlSegundos)],
+      },
+    );
+    if (typeof resultado !== 'string')
+      throw new Error('Revisión de caché no válida.');
+    return resultado;
+  }
+
+  /** Publica una lectura solo si no hubo invalidación mientras se consultaba MySQL. */
+  async guardarJsonSiRevision(
+    clave: string,
+    valor: unknown,
+    claveRevision: string,
+    revision: string,
+  ): Promise<boolean> {
+    const contenido = JSON.stringify(valor);
+
+    if (contenido === undefined) {
+      throw new Error('El valor no se puede representar como JSON.');
+    }
+
+    // Lua ejecuta la comparación y la escritura como una sola operación atómica.
+    const resultado = await this.cliente.eval(
+      `
+      if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
+      redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+      return 1
+    `,
+      {
+        keys: [this.claveCompleta(clave), this.claveCompleta(claveRevision)],
+        arguments: [
+          revision,
+          contenido,
+          String(this.configuracion.ttlSegundos),
+        ],
+      },
+    );
+    return resultado === 1;
+  }
+
+  /** Cambia la revisión y elimina el perfil sin dejar una ventana entre ambas acciones. */
+  async invalidarConRevision(
+    clave: string,
+    claveRevision: string,
+  ): Promise<void> {
+    // Un UUID nuevo evita reutilizar una revisión incluso tras vencimiento o eviction.
+    await this.cliente.eval(
+      `
+      redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])
+      return redis.call('DEL', KEYS[1])
+    `,
+      {
+        keys: [this.claveCompleta(clave), this.claveCompleta(claveRevision)],
+        arguments: [randomUUID(), String(this.configuracion.ttlSegundos)],
+      },
+    );
   }
 
   /** Agrega el espacio de nombres para separar aplicación, entorno y versión del formato. */
